@@ -1,0 +1,57 @@
+name: OPA Policy Check
+
+on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - 'policy/**'
+      - '.github/workflows/opa-policy-check.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  opa-policy-check:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup OPA
+        uses: open-policy-agent/setup-opa@v2
+
+      - name: Validate required label policy with valid input
+        run: |
+          RESULT=$(opa eval \
+            --format raw \
+            --input policy/examples/cloud-run-valid.json \
+            --data policy/opa \
+            "data.terraform.required_labels.deny")
+
+          echo "OPA result: $RESULT"
+
+          if [ "$RESULT" != "set()" ] && [ "$RESULT" != "[]" ]; then
+            echo "Expected no policy violations for valid input."
+            exit 1
+          fi
+
+      - name: Validate required label policy with invalid input
+        run: |
+          RESULT=$(opa eval \
+            --format raw \
+            --input policy/examples/cloud-run-invalid.json \
+            --data policy/opa \
+            "data.terraform.required_labels.deny")
+
+          echo "OPA result: $RESULT"
+
+          if echo "$RESULT" | grep -q "Cloud Run service missing owner label" && \
+             echo "$RESULT" | grep -q "Cloud Run service missing cost_center label"; then
+            echo "Expected policy violations detected."
+          else
+            echo "Expected policy violations were not detected."
+            exit 1
+          fi
