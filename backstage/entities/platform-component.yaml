@@ -1,0 +1,21 @@
+apiVersion: backstage.io/v1alpha1
+kind: Component
+
+metadata:
+  name: paved-road-platform
+  description: Enterprise Internal Developer Platform built on Google Cloud
+
+  annotations:
+    github.com/project-slug: Marcel2tight/paved-road-engine
+    backstage.io/techdocs-ref: dir:../..
+
+  links:
+    - url: https://github.com/Marcel2tight/paved-road-engine
+      title: Source Repository
+      icon: github
+
+spec:
+  type: service
+  lifecycle: production
+  owner: platform-team
+  system: paved-road

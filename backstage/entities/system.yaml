@@ -1,0 +1,9 @@
+apiVersion: backstage.io/v1alpha1
+kind: System
+
+metadata:
+  name: paved-road
+  description: Enterprise Platform Engineering System for secure, governed, observable, and cost-aware infrastructure delivery
+
+spec:
+  owner: platform-team
