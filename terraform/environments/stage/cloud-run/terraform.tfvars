@@ -1,8 +1,8 @@
-project_id            = "imposing-fx-413205"
+project_id            = "paved-road-stage-413205"
 region                = "us-central1"
 service_name          = "paved-road-stage-app"
 image                 = "us-docker.pkg.dev/cloudrun/container/hello"
-service_account_email = "paved-road-sa@imposing-fx-413205.iam.gserviceaccount.com"
+service_account_email = "paved-road-runtime@paved-road-stage-413205.iam.gserviceaccount.com"
 
 container_port        = 8080
 min_instance_count    = 0
@@ -22,7 +22,7 @@ labels = {
   managed_by  = "terraform"
   platform    = "paved-road-engine"
   security    = "hardened"
-  service     = "paved-road-engine"
+  service     = "paved-road-stage-app"
   owner       = "platform-team"
   cost_center = "engineering"
 }
