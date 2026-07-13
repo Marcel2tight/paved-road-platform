@@ -33,7 +33,7 @@ jobs:
       cancel-in-progress: false
 
     env:
-      TF_WORKING_DIR: terraform/environments/${{ inputs.target_environment }}/${{ inputs.component }}
+      TF_WORKING_DIR: ${{ vars.TF_ROOT }}
       TF_IN_AUTOMATION: true
 
     steps:
@@ -43,8 +43,16 @@ jobs:
       - name: Authenticate to Google Cloud via OIDC
         uses: google-github-actions/auth@v2
         with:
-          workload_identity_provider: projects/915035381641/locations/global/workloadIdentityPools/github-pool/providers/github-provider
-          service_account: paved-road-sa@imposing-fx-413205.iam.gserviceaccount.com
+          workload_identity_provider: ${{ vars.WIF_PROVIDER }}
+          service_account: ${{ vars.DEPLOYER_SERVICE_ACCOUNT }}
+          create_credentials_file: true
+          export_environment_variables: true
+
+      - name: Set up Google Cloud CLI
+        uses: google-github-actions/setup-gcloud@v2
+        with:
+          project_id: ${{ vars.GCP_PROJECT_ID }}
+
 
       - name: Set up Terraform
         uses: hashicorp/setup-terraform@v3
@@ -56,7 +64,7 @@ jobs:
         run: terraform -chdir=${TF_WORKING_DIR} validate
 
       - name: Terraform plan
-        run: terraform -chdir=${TF_WORKING_DIR} plan -lock=false -out=tfplan
+        run: terraform -chdir=${TF_WORKING_DIR} plan -out=tfplan
 
       - name: Upload Terraform plan artifact
         uses: actions/upload-artifact@v4
@@ -69,10 +77,16 @@ jobs:
 
       - name: Verify Cloud Run deployment
         run: |
-          gcloud run services list \
+          gcloud run services describe "${{ vars.CLOUD_RUN_SERVICE }}" \
             --platform=managed \
-            --region=us-central1 \
-            --project=imposing-fx-413205
+            --region="${{ vars.GCP_REGION }}" \
+            --project="${{ vars.GCP_PROJECT_ID }}" \
+            --format="yaml(
+              metadata.name,
+              status.latestReadyRevisionName,
+              status.conditions,
+              spec.template.spec.serviceAccountName
+            )"
 
       - name: Notify Slack (Promotion Success)
         if: success()
