@@ -6,11 +6,11 @@ metadata:
   description: Enterprise Internal Developer Platform built on Google Cloud
 
   annotations:
-    github.com/project-slug: Marcel2tight/paved-road-engine
+    github.com/project-slug: Marcel2tight/paved-road-platform
     backstage.io/techdocs-ref: dir:../..
 
   links:
-    - url: https://github.com/Marcel2tight/paved-road-engine
+    - url: https://github.com/Marcel2tight/paved-road-platform
       title: Source Repository
       icon: github
 
