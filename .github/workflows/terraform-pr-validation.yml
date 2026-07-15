@@ -76,6 +76,7 @@ jobs:
         uses: aquasecurity/tfsec-action@v1.0.3
         with:
           working_directory: ${{ env.TF_WORKING_DIR }}
+          github_token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Terraform plan
         run: terraform -chdir=${TF_WORKING_DIR} plan -out=tfplan
@@ -120,7 +121,10 @@ jobs:
         uses: google-github-actions/auth@v2
         with:
           workload_identity_provider: projects/915035381641/locations/global/workloadIdentityPools/github-pool/providers/github-provider
-          service_account: paved-road-sa@imposing-fx-413205.iam.gserviceaccount.com
+          service_account: paved-road-deployer@paved-road-stage-413205.iam.gserviceaccount.com
+          project_id: paved-road-stage-413205
+          create_credentials_file: true
+          export_environment_variables: true
 
       - name: Set up Terraform
         uses: hashicorp/setup-terraform@v3
@@ -146,6 +150,7 @@ jobs:
         uses: aquasecurity/tfsec-action@v1.0.3
         with:
           working_directory: ${{ env.TF_WORKING_DIR }}
+          github_token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Terraform plan
         run: terraform -chdir=${TF_WORKING_DIR} plan -out=tfplan
@@ -216,6 +221,7 @@ jobs:
         uses: aquasecurity/tfsec-action@v1.0.3
         with:
           working_directory: ${{ env.TF_WORKING_DIR }}
+          github_token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Terraform plan
         run: terraform -chdir=${TF_WORKING_DIR} plan -out=tfplan

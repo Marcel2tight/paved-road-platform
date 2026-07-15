@@ -44,7 +44,7 @@ variable "service_account_email" {
 variable "oauth_scopes" {
   description = "OAuth scopes for GKE nodes"
   type        = list(string)
-  default     = [
+  default = [
     "https://www.googleapis.com/auth/logging.write",
     "https://www.googleapis.com/auth/monitoring"
   ]

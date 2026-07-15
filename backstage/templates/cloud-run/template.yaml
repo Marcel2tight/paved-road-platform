@@ -3,7 +3,7 @@ kind: Template
 metadata:
   name: paved-road-cloud-run
   title: Paved Road Cloud Run
-  description: Generate Cloud Run Terraform and open a PR in paved-road-engine
+  description: Generate Cloud Run Terraform and open a PR in paved-road-platform
 
 spec:
   owner: platform-team
@@ -101,7 +101,7 @@ spec:
             allowedOwners:
               - Marcel2tight
             allowedRepos:
-              - paved-road-engine
+              - paved-road-platform
             requestUserCredentials:
               secretsKey: USER_OAUTH_TOKEN
               additionalScopes:

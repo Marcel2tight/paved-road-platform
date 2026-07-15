@@ -6,7 +6,7 @@
 ![Observability](https://img.shields.io/badge/Observability-Grafana%20%7C%20Cloud%20Monitoring-orange)
 ![License](https://img.shields.io/badge/License-Portfolio-lightgrey)
 
-# 🚀 Paved Road Engine
+# 🚀 Paved Road Platform
 
 ## Enterprise Internal Developer Platform (IDP) on Google Cloud
 
@@ -16,7 +16,7 @@
 
 ## Executive Summary
 
-Paved Road Engine is an enterprise-inspired Platform Engineering project that demonstrates how organizations can standardize infrastructure delivery, improve developer experience, and enforce governance through automation.
+Paved Road Platform is an enterprise-inspired Platform Engineering project that demonstrates how organizations can standardize infrastructure delivery, improve developer experience, and enforce governance through automation.
 
 The platform provides developers with a secure, self-service mechanism for provisioning cloud infrastructure while ensuring deployments comply with organizational security, reliability, and operational standards.
 
@@ -47,7 +47,7 @@ The project follows many of the engineering principles used by organizations suc
 
 # Project Objectives
 
-The primary objectives of the Paved Road Engine are to demonstrate:
+The primary objectives of the Paved Road Platform are to demonstrate:
 
 - Enterprise Platform Engineering
 - Internal Developer Platforms (IDPs)
@@ -156,7 +156,7 @@ Supported environments:
 
 # Enterprise Features
 
-The Paved Road Engine incorporates many of the engineering practices commonly found within mature Platform Engineering organizations.
+The Paved Road Platform incorporates many of the engineering practices commonly found within mature Platform Engineering organizations.
 
 | Capability | Description |
 |------------|-------------|
@@ -249,7 +249,7 @@ Platform Operations Dashboard
 
 ```text
 
-paved-road-engine/
+paved-road-platform/
 
 ├── .github/
 │   └── workflows/
@@ -385,9 +385,9 @@ This project demonstrates practical implementation of the following engineering 
 Clone the repository:
 
 ```bash
-git clone https://github.com/Marcel2tight/paved-road-engine.git
+git clone https://github.com/Marcel2tight/paved-road-platform.git
 
-cd paved-road-engine
+cd paved-road-platform
 ```
 
 Initialize Terraform:
@@ -433,7 +433,7 @@ The following screenshots demonstrate the completed platform.
 
 # Platform Journey
 
-The Paved Road Engine was developed incrementally to simulate the evolution of a real Internal Developer Platform. Each phase introduced additional enterprise capabilities while building on the previous foundation.
+The Paved Road Platform was developed incrementally to simulate the evolution of a real Internal Developer Platform. Each phase introduced additional enterprise capabilities while building on the previous foundation.
 
 | Phase | Major Deliverables |
 |--------|--------------------|
@@ -566,7 +566,7 @@ Every major platform capability is automated through Infrastructure as Code or C
 
 # Interview Highlights
 
-The Paved Road Engine demonstrates practical implementation of enterprise Platform Engineering concepts including:
+The Paved Road Platform demonstrates practical implementation of enterprise Platform Engineering concepts including:
 
 - Internal Developer Platforms (IDPs)
 - Platform APIs
@@ -711,6 +711,6 @@ The project is intended to showcase enterprise Platform Engineering concepts, cl
 
 # Final Notes
 
-The Paved Road Engine represents an end-to-end Platform Engineering implementation that combines developer experience, infrastructure automation, security, governance, reliability, and observability into a unified Internal Developer Platform.
+The Paved Road Platform represents an end-to-end Platform Engineering implementation that combines developer experience, infrastructure automation, security, governance, reliability, and observability into a unified Internal Developer Platform.
 
 The project demonstrates how modern engineering organizations can provide secure, standardized, and self-service cloud infrastructure while maintaining operational excellence and strong governance.

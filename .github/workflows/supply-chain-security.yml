@@ -65,5 +65,5 @@ jobs:
       - name: Verify keyless signature
         run: |
           cosign verify "$IMAGE_URI" \
-            --certificate-identity-regexp "https://github.com/Marcel2tight/paved-road-engine/.github/workflows/supply-chain-security.yml@refs/heads/.*" \
+            --certificate-identity-regexp "https://github.com/Marcel2tight/paved-road-platform/.github/workflows/supply-chain-security.yml@refs/heads/.*" \
             --certificate-oidc-issuer "https://token.actions.githubusercontent.com"

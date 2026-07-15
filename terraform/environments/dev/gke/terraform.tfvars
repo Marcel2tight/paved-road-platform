@@ -27,8 +27,8 @@ tags = [
 labels = {
   environment = "dev"
   managed_by  = "terraform"
-  platform    = "paved-road-engine"
+  platform    = "paved-road-platform"
   security    = "hardened"
-  service     = "paved-road-engine"
+  service     = "paved-road-dev-gke"
   owner       = "platform-team"
 }

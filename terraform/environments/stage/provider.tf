@@ -10,6 +10,6 @@ terraform {
 }
 
 provider "google" {
-  project = "imposing-fx-413205"
+  project = "paved-road-stage-413205"
   region  = "us-central1"
 }

@@ -14,12 +14,12 @@ allow_unauthenticated = ${{ values.allow_unauthenticated }}
 
 env_vars = {
   ENVIRONMENT = "${{ values.environment }}"
-  PLATFORM    = "paved-road-engine"
+  PLATFORM    = "paved-road-platform"
 }
 
 labels = {
   environment = "${{ values.environment }}"
   managed_by  = "backstage"
-  platform    = "paved-road-engine"
+  platform    = "paved-road-platform"
   security    = "hardened"
 }
