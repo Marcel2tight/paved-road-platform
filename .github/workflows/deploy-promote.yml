@@ -53,18 +53,38 @@ jobs:
         with:
           project_id: ${{ vars.GCP_PROJECT_ID }}
 
-
       - name: Set up Terraform
         uses: hashicorp/setup-terraform@v3
 
       - name: Terraform init
-        run: terraform -chdir=${TF_WORKING_DIR} init
+        run: terraform -chdir="${TF_WORKING_DIR}" init -reconfigure
+
+      - name: Select Terraform workspace
+        shell: bash
+        run: |
+          terraform -chdir="${TF_WORKING_DIR}" workspace select default
+
+      - name: Verify Terraform backend state
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "=== Diagnostic: Core Context ==="
+          echo "Terraform working directory: ${TF_WORKING_DIR}"
+          
+          echo "=== Diagnostic: Selected Workspace ==="
+          terraform -chdir="${TF_WORKING_DIR}" workspace show
+
+          echo "=== Diagnostic: Active Resources in State ==="
+          terraform -chdir="${TF_WORKING_DIR}" state list
+
+          echo "=== Diagnostic: Target Service Mapping ==="
+          terraform -chdir="${TF_WORKING_DIR}" state show module.cloud_run_app.google_cloud_run_v2_service.this || echo "Resource not found in state"
 
       - name: Terraform validate
-        run: terraform -chdir=${TF_WORKING_DIR} validate
+        run: terraform -chdir="${TF_WORKING_DIR}" validate
 
       - name: Terraform plan
-        run: terraform -chdir=${TF_WORKING_DIR} plan -out=tfplan
+        run: terraform -chdir="${TF_WORKING_DIR}" plan -out=tfplan
 
       - name: Upload Terraform plan artifact
         uses: actions/upload-artifact@v4
@@ -73,7 +93,7 @@ jobs:
           path: ${{ env.TF_WORKING_DIR }}/tfplan
 
       - name: Terraform apply
-        run: terraform -chdir=${TF_WORKING_DIR} apply -auto-approve tfplan
+        run: terraform -chdir="${TF_WORKING_DIR}" apply -auto-approve tfplan
 
       - name: Verify Cloud Run deployment
         run: |
@@ -85,6 +105,7 @@ jobs:
               metadata.name,
               status.latestReadyRevisionName,
               status.conditions,
+              spec.template.spec.containers[0].image,
               spec.template.spec.serviceAccountName
             )"
 
@@ -93,7 +114,7 @@ jobs:
         run: |
           curl -X POST -H 'Content-type: application/json' \
           --data "{
-            \"text\": \"🚀 *Promotion Successful*\nEnvironment: ${{ inputs.target_environment }}\nComponent: ${{ inputs.component }}\nCommit: \`${{ github.sha }}\`\nTriggered by: ${{ github.actor }}\"
+            \"text\": \"🚀 *Promotion Successful*\n*Environment:* \`${{ inputs.target_environment }}\`\n*Component:* \`${{ inputs.component }}\`\n*Commit:* \`${{ github.sha }}\`\n*Triggered by:* ${{ github.actor }}\"
           }" \
           ${{ secrets.SLACK_WEBHOOK_URL }}
 
@@ -102,6 +123,6 @@ jobs:
         run: |
           curl -X POST -H 'Content-type: application/json' \
           --data "{
-            \"text\": \"🔥 *Promotion Failed*\nEnvironment: ${{ inputs.target_environment }}\nComponent: ${{ inputs.component }}\nCommit: \`${{ github.sha }}\`\nActor: ${{ github.actor }}\nCheck logs: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}\"
+            \"text\": \"🔥 *Promotion Failed*\n*Environment:* \`${{ inputs.target_environment }}\`\n*Component:* \`${{ inputs.component }}\`\n*Commit:* \`${{ github.sha }}\`\n*Actor:* ${{ github.actor }}\n*Logs:* https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}\"
           }" \
           ${{ secrets.SLACK_WEBHOOK_URL }}
