@@ -13,16 +13,18 @@ ingress               = "INGRESS_TRAFFIC_INTERNAL_ONLY"
 allow_unauthenticated = false
 
 env_vars = {
-  ENVIRONMENT = "dev"
-  PLATFORM    = "paved-road-platform"
+  ENVIRONMENT  = "dev"
+  PLATFORM     = "paved-road-platform"
+  SERVICE_NAME = "backstage-acceptance-test"
+  APP_VERSION  = "v1.0.0"
 }
 
 labels = {
   environment = "dev"
-  managed_by  = "backstage"
+  managed_by  = "terraform"
   platform    = "paved-road-platform"
   security    = "hardened"
-  service     = "paved-road-dev-service"
+  service     = "backstage-acceptance-test"
   owner       = "platform-team"
   cost_center = "engineering"
 }
