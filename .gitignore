@@ -1,10 +1,32 @@
-# Terraform
+# Terraform generated plans and state
 **/.terraform/*
 *.tfstate
 *.tfstate.*
 crash.log
+crash.*.log
 *.tfplan
 *.tfplan.*
+**/tfplan
 
-# Secrets / local env
+# Local Terraform state backups
+terraform-state-backups/
+*terraform-state-backups/*
+**/terraform-state-backups/
+
+# Private signing and credential files
+*.key
+*.pem
+cosign/**/*.key
+cosign/**/*.pem
+
+# Generated SBOM artifacts
+sbom/
+**/sbom/
+
+# Local environment files
 .env
+.env.*
+
+# Grafana credentials
+grafana-monitoring-reader.json
+*.json.key
