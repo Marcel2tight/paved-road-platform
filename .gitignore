@@ -19,6 +19,10 @@ terraform-state-backups/
 cosign/**/*.key
 cosign/**/*.pem
 
+# Local Cosign key material
+cosign/
+**/cosign/
+
 # Generated SBOM artifacts
 sbom/
 **/sbom/
