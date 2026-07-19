@@ -211,16 +211,22 @@ jobs:
         run: |
           set -euo pipefail
 
-          cosign verify \
+          timeout 5m cosign verify \
             "${IMAGE_DIGEST_URI}" \
             --certificate-identity "${CERTIFICATE_IDENTITY}" \
-            --certificate-oidc-issuer "https://token.actions.githubusercontent.com"
+            --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+            >/dev/null
 
-          cosign verify-attestation \
+          echo "Keyless signature verification passed."
+
+          timeout 5m cosign verify-attestation \
             "${IMAGE_DIGEST_URI}" \
             --type spdxjson \
             --certificate-identity "${CERTIFICATE_IDENTITY}" \
-            --certificate-oidc-issuer "https://token.actions.githubusercontent.com"
+            --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+            >/dev/null
+
+          echo "SPDX SBOM attestation verification passed."
 
       - name: Publish build summary
         env:
