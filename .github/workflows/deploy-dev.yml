@@ -32,14 +32,68 @@ jobs:
           workload_identity_provider: projects/915035381641/locations/global/workloadIdentityPools/github-pool/providers/github-provider
           service_account: paved-road-sa@imposing-fx-413205.iam.gserviceaccount.com
 
+      - name: Set up Google Cloud CLI
+        uses: google-github-actions/setup-gcloud@v2
+        with:
+          project_id: imposing-fx-413205
+
+      - name: Configure Artifact Registry authentication
+        run: |
+          gcloud auth configure-docker \
+            us-central1-docker.pkg.dev \
+            --quiet
+
       - name: Set up Terraform
         uses: hashicorp/setup-terraform@v3
 
       - name: Terraform init
         run: terraform -chdir=${TF_WORKING_DIR} init
 
+      - name: Resolve configured immutable image
+        id: image
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          IMAGE_DIGEST_URI="$(
+            terraform -chdir="${TF_WORKING_DIR}" console <<<'var.image' |
+            tail -n 1 |
+            tr -d '"\r'
+          )"
+
+          if [[ ! "${IMAGE_DIGEST_URI}" =~ ^us-central1-docker\.pkg\.dev/imposing-fx-413205/paved-road-containers/paved-road-platform@sha256:[a-f0-9]{64}$ ]]; then
+            echo "Terraform must reference an immutable Paved Road image digest."
+            exit 1
+          fi
+
+          echo "digest_uri=${IMAGE_DIGEST_URI}" >> "${GITHUB_OUTPUT}"
+
+      - name: Install Cosign
+        uses: sigstore/cosign-installer@v3
+
+      - name: Verify image signature and SBOM attestation
+        env:
+          IMAGE_DIGEST_URI: ${{ steps.image.outputs.digest_uri }}
+          CERTIFICATE_IDENTITY: https://github.com/Marcel2tight/paved-road-platform/.github/workflows/build-paved-road-image.yml@refs/heads/main
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          timeout 5m cosign verify \
+            "${IMAGE_DIGEST_URI}" \
+            --certificate-identity "${CERTIFICATE_IDENTITY}" \
+            --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+            >/dev/null
+
+          timeout 5m cosign verify-attestation \
+            "${IMAGE_DIGEST_URI}" \
+            --type spdxjson \
+            --certificate-identity "${CERTIFICATE_IDENTITY}" \
+            --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+            >/dev/null
+
       - name: Terraform apply
-        run: terraform -chdir=${TF_WORKING_DIR} apply -auto-approve
+        run: terraform -chdir=${TF_WORKING_DIR} apply -input=false -auto-approve
 
       - name: Verify Cloud Run deployment
         run: |
