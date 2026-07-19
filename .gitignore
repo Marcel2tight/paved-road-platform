@@ -34,3 +34,8 @@ sbom/
 # Grafana credentials
 grafana-monitoring-reader.json
 *.json.key
+
+# Python generated files and local virtual environments
+__pycache__/
+*.py[cod]
+.venv/

@@ -3,8 +3,13 @@ import logging
 import os
 import time
 from flask import Flask, Response, jsonify, request
-from prometheus_client import Counter, Histogram, Info, generate_latest
-from prometheus_client.CONTENT_TYPE_LATEST import CONTENT_TYPE_LATEST
+from prometheus_client import (
+    CONTENT_TYPE_LATEST,
+    Counter,
+    Histogram,
+    Info,
+    generate_latest,
+)
 
 class JsonFormatter(logging.Formatter):
     def format(self, record: logging.LogRecord) -> str:
@@ -14,10 +19,14 @@ class JsonFormatter(logging.Formatter):
             "message": record.getMessage(),
             "logger": record.name,
         }
-        if hasattr(record, "http_method"): optimize = payload["http_method"] = record.http_method
-        if hasattr(record, "http_path"): payload["http_path"] = record.http_path
-        if hasattr(record, "status_code"): payload["status_code"] = record.status_code
-        if hasattr(record, "duration_ms"): payload["duration_ms"] = record.duration_ms
+        if hasattr(record, "http_method"):
+            payload["http_method"] = record.http_method
+        if hasattr(record, "http_path"):
+            payload["http_path"] = record.http_path
+        if hasattr(record, "status_code"):
+            payload["status_code"] = record.status_code
+        if hasattr(record, "duration_ms"):
+            payload["duration_ms"] = record.duration_ms
         return json.dumps(payload)
 
 handler = logging.StreamHandler()
