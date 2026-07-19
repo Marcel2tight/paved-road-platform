@@ -6,6 +6,7 @@ on:
       - main
     paths:
       - 'terraform/environments/dev/**'
+      - '.github/workflows/deploy-dev.yml'
 
 permissions:
   contents: read
@@ -55,10 +56,24 @@ jobs:
         run: |
           set -euo pipefail
 
+          TFVARS_FILE="${TF_WORKING_DIR}/terraform.tfvars"
+
+          IMAGE_ENTRY_COUNT="$(
+            awk \
+              '/^[[:space:]]*image[[:space:]]*=/{count++}
+               END {print count + 0}' \
+              "${TFVARS_FILE}"
+          )"
+
+          if [ "${IMAGE_ENTRY_COUNT}" -ne 1 ]; then
+            echo "Expected exactly one image assignment in ${TFVARS_FILE}."
+            exit 1
+          fi
+
           IMAGE_DIGEST_URI="$(
-            terraform -chdir="${TF_WORKING_DIR}" console <<<'var.image' |
-            tail -n 1 |
-            tr -d '"\r'
+            awk -F'"' \
+              '/^[[:space:]]*image[[:space:]]*=/{print $2}' \
+              "${TFVARS_FILE}"
           )"
 
           if [[ ! "${IMAGE_DIGEST_URI}" =~ ^us-central1-docker\.pkg\.dev/imposing-fx-413205/paved-road-containers/paved-road-platform@sha256:[a-f0-9]{64}$ ]]; then
