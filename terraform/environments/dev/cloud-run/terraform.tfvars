@@ -1,7 +1,7 @@
 project_id            = "imposing-fx-413205"
 region                = "us-central1"
 service_name          = "backstage-acceptance-test"
-image                 = "us-central1-docker.pkg.dev/imposing-fx-413205/paved-road-containers/paved-road-platform:v1.0.0"
+image                 = "us-central1-docker.pkg.dev/imposing-fx-413205/paved-road-containers/paved-road-platform@sha256:60ccaaa7e96e34a5392c75254e8fa066da75153331d6b08023edde63012deaad"
 service_account_email = "paved-road-sa@imposing-fx-413205.iam.gserviceaccount.com"
 
 container_port        = 8080
@@ -16,7 +16,8 @@ env_vars = {
   ENVIRONMENT  = "dev"
   PLATFORM     = "paved-road-platform"
   SERVICE_NAME = "backstage-acceptance-test"
-  APP_VERSION  = "v1.0.0"
+  APP_VERSION  = "v1.0.1"
+  COMMIT_SHA   = "fdb279bd558640e6eeecd4aa3dda85fb930263d1"
 }
 
 labels = {
@@ -28,4 +29,3 @@ labels = {
   owner       = "platform-team"
   cost_center = "engineering"
 }
-
