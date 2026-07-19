@@ -1,7 +1,7 @@
 project_id            = "paved-road-stage-413205"
 region                = "us-central1"
 service_name          = "paved-road-stage-app"
-image                 = "us-central1-docker.pkg.dev/paved-road-stage-413205/paved-road-containers/paved-road-platform:v1.0.0"
+image                 = "us-central1-docker.pkg.dev/paved-road-stage-413205/paved-road-containers/paved-road-platform@sha256:60ccaaa7e96e34a5392c75254e8fa066da75153331d6b08023edde63012deaad"
 service_account_email = "paved-road-runtime@paved-road-stage-413205.iam.gserviceaccount.com"
 
 container_port        = 8080
@@ -13,8 +13,11 @@ ingress               = "INGRESS_TRAFFIC_INTERNAL_ONLY"
 allow_unauthenticated = false
 
 env_vars = {
-  ENVIRONMENT = "stage"
-  PLATFORM    = "paved-road-platform"
+  ENVIRONMENT  = "stage"
+  PLATFORM     = "paved-road-platform"
+  SERVICE_NAME = "paved-road-stage-app"
+  APP_VERSION  = "v1.0.1"
+  COMMIT_SHA   = "fdb279bd558640e6eeecd4aa3dda85fb930263d1"
 }
 
 labels = {

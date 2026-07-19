@@ -16,6 +16,11 @@ on:
         type: choice
         options:
           - cloud-run
+      release_tag:
+        description: "Previously built and signed release tag"
+        required: true
+        default: "v1.0.1"
+        type: string
 
 permissions:
   contents: read
@@ -35,6 +40,7 @@ jobs:
     env:
       TF_WORKING_DIR: ${{ vars.TF_ROOT }}
       TF_IN_AUTOMATION: true
+      TF_VAR_alert_email: ${{ secrets._ALERT_EMAIL }}
 
     steps:
       - name: Checkout repository
@@ -86,12 +92,181 @@ jobs:
       - name: Terraform validate
         run: terraform -chdir="${TF_WORKING_DIR}" validate
 
-      - name: Verify container image exists
+      - name: Configure Artifact Registry authentication
         shell: bash
         run: |
-          gcloud artifacts docker images describe \
-            "${{ vars.IMAGE_URI }}" \
-            --project="${{ vars.GCP_PROJECT_ID }}"
+          gcloud auth configure-docker \
+            "${{ vars.GCP_REGION }}-docker.pkg.dev" \
+            --quiet
+
+      - name: Install ORAS
+        uses: oras-project/setup-oras@v1
+
+      - name: Install Cosign
+        uses: sigstore/cosign-installer@v3
+
+      - name: Resolve promotion references
+        id: image
+        shell: bash
+        env:
+          RELEASE_TAG: ${{ inputs.release_tag }}
+          SOURCE_PROJECT_ID: ${{ vars.SOURCE_PROJECT_ID }}
+          TARGET_PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
+          REGION: ${{ vars.GCP_REGION }}
+          REPOSITORY: ${{ vars.IMAGE_REPOSITORY }}
+          IMAGE_NAME: ${{ vars.IMAGE_NAME }}
+        run: |
+          set -euo pipefail
+
+          if [[ ! "${RELEASE_TAG}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Release tag must use semantic version format such as v1.0.1."
+            exit 1
+          fi
+
+          TFVARS_FILE="${TF_WORKING_DIR}/terraform.tfvars"
+
+          CONFIGURED_IMAGE="$(
+            awk -F'"' \
+              '/^[[:space:]]*image[[:space:]]*=/{print $2}' \
+              "${TFVARS_FILE}"
+          )"
+
+          CONFIGURED_VERSION="$(
+            awk -F'"' \
+              '/^[[:space:]]*APP_VERSION[[:space:]]*=/{print $2}' \
+              "${TFVARS_FILE}"
+          )"
+
+          if [ "${CONFIGURED_VERSION}" != "${RELEASE_TAG}" ]; then
+            echo "Release tag ${RELEASE_TAG} does not match APP_VERSION ${CONFIGURED_VERSION}."
+            exit 1
+          fi
+
+          TARGET_REPOSITORY="${REGION}-docker.pkg.dev/${TARGET_PROJECT_ID}/${REPOSITORY}/${IMAGE_NAME}"
+
+          if [[ ! "${CONFIGURED_IMAGE}" =~ ^${TARGET_REPOSITORY}@sha256:[a-f0-9]{64}$ ]]; then
+            echo "Stage Terraform must reference an immutable image in ${TARGET_REPOSITORY}."
+            exit 1
+          fi
+
+          IMAGE_DIGEST="${CONFIGURED_IMAGE##*@}"
+          SOURCE_DIGEST_URI="${REGION}-docker.pkg.dev/${SOURCE_PROJECT_ID}/${REPOSITORY}/${IMAGE_NAME}@${IMAGE_DIGEST}"
+          TARGET_TAG_URI="${TARGET_REPOSITORY}:${RELEASE_TAG}"
+          TARGET_DIGEST_URI="${TARGET_REPOSITORY}@${IMAGE_DIGEST}"
+
+          {
+            echo "digest=${IMAGE_DIGEST}"
+            echo "source_digest_uri=${SOURCE_DIGEST_URI}"
+            echo "target_tag_uri=${TARGET_TAG_URI}"
+            echo "target_digest_uri=${TARGET_DIGEST_URI}"
+          } >> "${GITHUB_OUTPUT}"
+
+      - name: Protect immutable release tag
+        shell: bash
+        env:
+          EXPECTED_DIGEST: ${{ steps.image.outputs.digest }}
+          TARGET_TAG_URI: ${{ steps.image.outputs.target_tag_uri }}
+        run: |
+          set -euo pipefail
+
+          EXISTING_DIGEST="$(
+            gcloud artifacts docker images describe \
+              "${TARGET_TAG_URI}" \
+              --project="${{ vars.GCP_PROJECT_ID }}" \
+              --format="value(image_summary.digest)" \
+              2>/dev/null || true
+          )"
+
+          if [ -n "${EXISTING_DIGEST}" ] && \
+             [ "${EXISTING_DIGEST}" != "${EXPECTED_DIGEST}" ]; then
+            echo "Release tag already points to a different digest."
+            echo "Existing: ${EXISTING_DIGEST}"
+            echo "Expected: ${EXPECTED_DIGEST}"
+            exit 1
+          fi
+
+          if [ -n "${EXISTING_DIGEST}" ]; then
+            echo "Release tag already points to the expected digest; continuing idempotently."
+          else
+            echo "Release tag is available for promotion."
+          fi
+
+      - name: Verify signed source artifact
+        shell: bash
+        env:
+          SOURCE_DIGEST_URI: ${{ steps.image.outputs.source_digest_uri }}
+          CERTIFICATE_IDENTITY: https://github.com/Marcel2tight/paved-road-platform/.github/workflows/build-paved-road-image.yml@refs/heads/main
+        run: |
+          set -euo pipefail
+
+          timeout 5m cosign verify \
+            "${SOURCE_DIGEST_URI}" \
+            --certificate-identity "${CERTIFICATE_IDENTITY}" \
+            --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+            >/dev/null
+
+          timeout 5m cosign verify-attestation \
+            "${SOURCE_DIGEST_URI}" \
+            --type spdxjson \
+            --certificate-identity "${CERTIFICATE_IDENTITY}" \
+            --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+            >/dev/null
+
+      - name: Copy image and supply-chain artifacts
+        shell: bash
+        env:
+          SOURCE_DIGEST_URI: ${{ steps.image.outputs.source_digest_uri }}
+          TARGET_TAG_URI: ${{ steps.image.outputs.target_tag_uri }}
+        run: |
+          set -euo pipefail
+
+          oras copy \
+            --recursive \
+            "${SOURCE_DIGEST_URI}" \
+            "${TARGET_TAG_URI}"
+
+      - name: Verify promoted digest
+        shell: bash
+        env:
+          EXPECTED_DIGEST: ${{ steps.image.outputs.digest }}
+          TARGET_TAG_URI: ${{ steps.image.outputs.target_tag_uri }}
+        run: |
+          set -euo pipefail
+
+          ACTUAL_DIGEST="$(
+            gcloud artifacts docker images describe \
+              "${TARGET_TAG_URI}" \
+              --project="${{ vars.GCP_PROJECT_ID }}" \
+              --format="value(image_summary.digest)"
+          )"
+
+          if [ "${ACTUAL_DIGEST}" != "${EXPECTED_DIGEST}" ]; then
+            echo "Promoted digest ${ACTUAL_DIGEST} does not match ${EXPECTED_DIGEST}."
+            exit 1
+          fi
+
+          echo "Promoted image digest matches the verified source digest."
+
+      - name: Verify promoted signature and SBOM attestation
+        shell: bash
+        env:
+          TARGET_DIGEST_URI: ${{ steps.image.outputs.target_digest_uri }}
+          CERTIFICATE_IDENTITY: https://github.com/Marcel2tight/paved-road-platform/.github/workflows/build-paved-road-image.yml@refs/heads/main
+        run: |
+          set -euo pipefail
+
+          timeout 5m cosign verify \
+            "${TARGET_DIGEST_URI}" \
+            --certificate-identity "${CERTIFICATE_IDENTITY}" \
+            --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+            >/dev/null
+
+          timeout 5m cosign verify-attestation \
+            "${TARGET_DIGEST_URI}" \
+            --type spdxjson \
+            --certificate-identity "${CERTIFICATE_IDENTITY}" \
+            --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+            >/dev/null
 
       - name: Terraform plan
         run: terraform -chdir="${TF_WORKING_DIR}" plan -out=tfplan
