@@ -40,7 +40,7 @@ jobs:
     env:
       TF_WORKING_DIR: ${{ vars.TF_ROOT }}
       TF_IN_AUTOMATION: true
-      TF_VAR_alert_email: ${{ secrets._ALERT_EMAIL }}
+      TF_VAR_alert_email: ${{ secrets.ALERT_EMAIL }}
 
     steps:
       - name: Checkout repository
