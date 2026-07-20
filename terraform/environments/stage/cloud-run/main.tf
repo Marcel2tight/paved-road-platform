@@ -84,3 +84,50 @@ module "service_monitoring" {
     platform    = "paved-road-platform"
   }
 }
+
+resource "google_service_account" "synthetic_probe" {
+  project      = var.project_id
+  account_id   = "paved-road-stage-probe"
+  display_name = "Paved Road Stage Synthetic Probe"
+  description  = "OIDC identity used by Cloud Scheduler to probe the Stage Cloud Run service."
+}
+
+resource "google_cloud_run_v2_service_iam_member" "synthetic_probe_invoker" {
+  project  = var.project_id
+  name     = module.cloud_run_app.service_name
+  location = module.cloud_run_app.service_location
+  role     = "roles/run.invoker"
+  member   = "serviceAccount:${google_service_account.synthetic_probe.email}"
+}
+
+resource "google_cloud_scheduler_job" "synthetic_health_probe" {
+  project     = var.project_id
+  region      = var.region
+  name        = "${var.service_name}-health-probe"
+  description = "Authenticated synthetic health probe for the Stage Cloud Run service."
+  schedule    = "*/5 * * * *"
+  time_zone   = "Etc/UTC"
+
+  attempt_deadline = "30s"
+
+  http_target {
+    uri         = "${module.cloud_run_app.service_uri}/health"
+    http_method = "GET"
+
+    oidc_token {
+      service_account_email = google_service_account.synthetic_probe.email
+      audience              = module.cloud_run_app.service_uri
+    }
+  }
+
+  retry_config {
+    retry_count          = 3
+    min_backoff_duration = "5s"
+    max_backoff_duration = "30s"
+    max_doublings        = 2
+  }
+
+  depends_on = [
+    google_cloud_run_v2_service_iam_member.synthetic_probe_invoker
+  ]
+}
