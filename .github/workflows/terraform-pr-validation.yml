@@ -34,6 +34,7 @@ jobs:
               - 'terraform/modules/service-monitoring/**'
             prod_cloud_run:
               - 'terraform/environments/prod/cloud-run/**'
+              - 'terraform/modules/service-monitoring/**'
 
   validate-dev-cloud-run:
     name: Validate Dev Cloud Run
@@ -192,7 +193,10 @@ jobs:
         uses: google-github-actions/auth@v2
         with:
           workload_identity_provider: projects/915035381641/locations/global/workloadIdentityPools/github-pool/providers/github-provider
-          service_account: paved-road-sa@imposing-fx-413205.iam.gserviceaccount.com
+          service_account: paved-road-deployer@paved-road-prod-413205.iam.gserviceaccount.com
+          project_id: paved-road-prod-413205
+          create_credentials_file: true
+          export_environment_variables: true
 
       - name: Set up Terraform
         uses: hashicorp/setup-terraform@v3
@@ -221,13 +225,9 @@ jobs:
           github_token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Terraform plan
-        run: terraform -chdir=${TF_WORKING_DIR} plan -out=tfplan
-
-      - name: Upload Terraform plan artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: prod-cloud-run-tfplan
-          path: ${{ env.TF_WORKING_DIR }}/tfplan
+        env:
+          TF_VAR_alert_email: ${{ secrets.PROD_ALERT_EMAIL }}
+        run: terraform -chdir=${TF_WORKING_DIR} plan -input=false -no-color
 
       - name: Notify Slack (PR Validation Success)
         if: success()

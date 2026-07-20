@@ -31,3 +31,56 @@ module "cloud_run_app" {
   env_vars              = var.env_vars
   labels                = var.labels
 }
+
+module "service_monitoring" {
+  source = "../../../modules/service-monitoring"
+
+  project_id             = var.project_id
+  environment            = "prod"
+  region                 = var.region
+  cloud_run_service_name = var.service_name
+
+  monitoring_service_id           = "paved-road-prod-cloud-run"
+  monitoring_service_display_name = "Paved Road Production Cloud Run Service"
+
+  slo_id           = "availability-99-9"
+  slo_display_name = "Cloud Run Production Availability SLO"
+  slo_goal         = 0.999
+
+  rolling_period_days = 30
+  fast_burn_lookback  = "300s"
+  fast_burn_threshold = 2.0
+
+  alert_email                       = var.alert_email
+  notification_channel_display_name = "Paved Road Production SLO Alerts"
+  alert_policy_display_name         = "Production SLO Fast Burn Alert (5m)"
+
+  # Pre-authorized Production Slack notification channel
+  additional_notification_channels = [
+    "projects/paved-road-prod-413205/notificationChannels/2404726903934443147"
+  ]
+
+  documentation_content = <<-EOT
+    ## Production SLO fast-burn response
+
+    The Production Cloud Run availability SLO is consuming its error budget faster than the configured threshold.
+
+    1. Inspect the Cloud Run service:
+
+       `gcloud run services describe ${var.service_name} --region=${var.region} --project=${var.project_id}`
+
+    2. Review recent request and application logs in Cloud Logging.
+
+    3. Check the latest ready revision and recent deployment history.
+
+    4. Validate the Production promotion workflow in GitHub Actions.
+
+    5. If a recent revision caused the incident, shift traffic back to the last healthy revision or redeploy the previous verified image.
+  EOT
+
+  user_labels = {
+    environment = "prod"
+    managed_by  = "terraform"
+    platform    = "paved-road-platform"
+  }
+}

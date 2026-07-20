@@ -76,3 +76,14 @@ variable "labels" {
   type        = map(string)
   default     = {}
 }
+
+variable "alert_email" {
+  description = "Email address for Production SLO alerts"
+  type        = string
+  sensitive   = true
+
+  validation {
+    condition     = can(regex("^[^@[:space:]]+@[^@[:space:]]+\\.[^@[:space:]]+$", var.alert_email))
+    error_message = "Alert email must be a valid email address."
+  }
+}
