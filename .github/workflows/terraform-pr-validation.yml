@@ -31,6 +31,7 @@ jobs:
               - 'terraform/environments/dev/cloud-run/**'
             stage_cloud_run:
               - 'terraform/environments/stage/cloud-run/**'
+              - 'terraform/modules/service-monitoring/**'
             prod_cloud_run:
               - 'terraform/environments/prod/cloud-run/**'
 

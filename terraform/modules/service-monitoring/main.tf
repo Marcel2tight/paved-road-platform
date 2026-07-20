@@ -56,7 +56,7 @@ resource "google_monitoring_alert_policy" "fast_burn" {
   user_labels = var.user_labels
 
   documentation {
-    content   = var.documentation_content
+    content   = replace(var.documentation_content, "\r\n", "\n")
     mime_type = "text/markdown"
   }
 
