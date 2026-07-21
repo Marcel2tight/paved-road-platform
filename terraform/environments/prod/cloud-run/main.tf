@@ -98,6 +98,12 @@ resource "google_service_account_iam_member" "synthetic_probe_deployer_user" {
   member             = "serviceAccount:paved-road-deployer@paved-road-prod-413205.iam.gserviceaccount.com"
 }
 
+resource "google_service_account_iam_member" "synthetic_probe_deployer_admin" {
+  service_account_id = google_service_account.synthetic_probe.name
+  role               = "roles/iam.serviceAccountAdmin"
+  member             = "serviceAccount:paved-road-deployer@paved-road-prod-413205.iam.gserviceaccount.com"
+}
+
 resource "google_cloud_run_v2_service_iam_member" "synthetic_probe_invoker" {
   project  = var.project_id
   name     = module.cloud_run_app.service_name
@@ -135,6 +141,7 @@ resource "google_cloud_scheduler_job" "synthetic_health_probe" {
 
   depends_on = [
     google_cloud_run_v2_service_iam_member.synthetic_probe_invoker,
-    google_service_account_iam_member.synthetic_probe_deployer_user
+    google_service_account_iam_member.synthetic_probe_deployer_user,
+    google_service_account_iam_member.synthetic_probe_deployer_admin
   ]
 }
