@@ -27,14 +27,17 @@ permissions:
   id-token: write
 
 jobs:
-  promote-cloud-run:
-    name: Promote Cloud Run
+  promotion-plan:
+    name: "Plan (${{ inputs.target_environment }})"
     runs-on: ubuntu-latest
 
-    environment: ${{ inputs.target_environment }}
+    outputs:
+      expected_digest_uri: ${{ steps.image.outputs.target_digest_uri }}
+
+    environment: ${{ format('{0}-plan', inputs.target_environment) }}
 
     concurrency:
-      group: promote-${{ inputs.target_environment }}-${{ inputs.component }}
+      group: promote-plan-${{ inputs.target_environment }}-${{ inputs.component }}
       cancel-in-progress: false
 
     env:
@@ -276,6 +279,57 @@ jobs:
         with:
           name: ${{ inputs.target_environment }}-${{ inputs.component }}-tfplan
           path: ${{ env.TF_WORKING_DIR }}/tfplan
+          retention-days: 1
+
+  promotion-apply:
+    name: "Apply (${{ inputs.target_environment }})"
+    needs: promotion-plan
+    runs-on: ubuntu-latest
+
+    environment: ${{ inputs.target_environment }}
+
+    concurrency:
+      group: promote-apply-${{ inputs.target_environment }}-${{ inputs.component }}
+      cancel-in-progress: false
+
+    env:
+      TF_WORKING_DIR: ${{ vars.TF_ROOT }}
+      TF_IN_AUTOMATION: true
+      TF_VAR_alert_email: ${{ secrets.ALERT_EMAIL }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Authenticate to Google Cloud via OIDC
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.WIF_PROVIDER }}
+          service_account: ${{ vars.DEPLOYER_SERVICE_ACCOUNT }}
+          create_credentials_file: true
+          export_environment_variables: true
+
+      - name: Set up Google Cloud CLI
+        uses: google-github-actions/setup-gcloud@v2
+        with:
+          project_id: ${{ vars.GCP_PROJECT_ID }}
+
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@v3
+
+      - name: Terraform init
+        run: terraform -chdir="${TF_WORKING_DIR}" init -reconfigure
+
+      - name: Select Terraform workspace
+        shell: bash
+        run: |
+          terraform -chdir="${TF_WORKING_DIR}" workspace select default
+
+      - name: Download Terraform plan artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ inputs.target_environment }}-${{ inputs.component }}-tfplan
+          path: ${{ env.TF_WORKING_DIR }}
 
       - name: Terraform apply
         run: terraform -chdir="${TF_WORKING_DIR}" apply -auto-approve tfplan
@@ -293,6 +347,51 @@ jobs:
               spec.template.spec.containers[0].image,
               spec.template.spec.serviceAccountName
             )"
+
+      - name: Verify deployed immutable digest
+        shell: bash
+        env:
+          EXPECTED_DIGEST_URI: ${{ needs.promotion-plan.outputs.expected_digest_uri }}
+        run: |
+          set -euo pipefail
+
+          if [[ ! "${EXPECTED_DIGEST_URI}" =~ @sha256:[a-f0-9]{64}$ ]]; then
+            echo "::error::Expected digest output is missing or invalid: ${EXPECTED_DIGEST_URI}"
+            exit 1
+          fi
+
+          LATEST_READY_REVISION="$(
+            gcloud run services describe \
+              "${{ vars.CLOUD_RUN_SERVICE }}" \
+              --platform=managed \
+              --region="${{ vars.GCP_REGION }}" \
+              --project="${{ vars.GCP_PROJECT_ID }}" \
+              --format='value(status.latestReadyRevisionName)'
+          )"
+
+          if [ -z "${LATEST_READY_REVISION}" ]; then
+            echo "::error::Cloud Run did not report a latest ready revision."
+            exit 1
+          fi
+
+          DEPLOYED_DIGEST_URI="$(
+            gcloud run revisions describe \
+              "${LATEST_READY_REVISION}" \
+              --region="${{ vars.GCP_REGION }}" \
+              --project="${{ vars.GCP_PROJECT_ID }}" \
+              --format='value(status.imageDigest)'
+          )"
+
+          printf 'Expected digest: %s\n' "${EXPECTED_DIGEST_URI}"
+          printf 'Ready revision:  %s\n' "${LATEST_READY_REVISION}"
+          printf 'Deployed digest: %s\n' "${DEPLOYED_DIGEST_URI}"
+
+          if [ "${DEPLOYED_DIGEST_URI}" != "${EXPECTED_DIGEST_URI}" ]; then
+            echo "::error::Cloud Run is not running the approved immutable digest."
+            exit 1
+          fi
+
+          echo "PASS: Cloud Run is running the approved immutable digest."
 
       - name: Notify Slack (Promotion Success)
         if: success()
