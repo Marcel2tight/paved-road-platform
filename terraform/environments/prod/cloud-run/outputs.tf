@@ -24,3 +24,13 @@ output "synthetic_health_probe_uri" {
   description = "Production endpoint monitored by the synthetic health probe"
   value       = google_cloud_scheduler_job.synthetic_health_probe.http_target[0].uri
 }
+
+output "synthetic_probe_failure_metric" {
+  description = "Production synthetic-probe failure log-based metric"
+  value       = module.synthetic_probe_monitoring.log_metric_name
+}
+
+output "synthetic_probe_failure_alert_policy" {
+  description = "Production synthetic-probe failure alert policy"
+  value       = module.synthetic_probe_monitoring.alert_policy_name
+}

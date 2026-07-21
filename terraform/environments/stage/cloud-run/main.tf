@@ -138,3 +138,46 @@ resource "google_cloud_scheduler_job" "synthetic_health_probe" {
     google_service_account_iam_member.synthetic_probe_deployer_user
   ]
 }
+
+module "synthetic_probe_monitoring" {
+  source = "../../../modules/synthetic-probe-monitoring"
+
+  project_id         = var.project_id
+  environment        = "stage"
+  scheduler_job_name = google_cloud_scheduler_job.synthetic_health_probe.name
+
+  notification_channels = [
+    module.service_monitoring.notification_channel_name,
+    "projects/paved-road-stage-413205/notificationChannels/5000095873551078662"
+  ]
+
+  documentation_content = <<-EOT
+    ## Stage synthetic probe failure
+
+    The authenticated Cloud Scheduler health probe for the Stage Cloud Run service returned an HTTP error.
+
+    1. Inspect the Scheduler job:
+
+       `gcloud scheduler jobs describe ${google_cloud_scheduler_job.synthetic_health_probe.name} --location=${var.region} --project=${var.project_id}`
+
+    2. Review recent Scheduler execution logs:
+
+       `gcloud logging read 'resource.type="cloud_scheduler_job" AND resource.labels.job_id="${google_cloud_scheduler_job.synthetic_health_probe.name}"' --freshness=30m --project=${var.project_id}`
+
+    3. Inspect the Cloud Run service:
+
+       `gcloud run services describe ${var.service_name} --region=${var.region} --project=${var.project_id}`
+
+    4. Confirm that the probe identity retains service-specific `roles/run.invoker`.
+
+    5. Check the `/health` endpoint and the latest ready Cloud Run revision.
+
+    6. If a recent deployment caused the failure, redeploy the last verified immutable image.
+  EOT
+
+  user_labels = {
+    environment = "stage"
+    managed_by  = "terraform"
+    platform    = "paved-road-platform"
+  }
+}
