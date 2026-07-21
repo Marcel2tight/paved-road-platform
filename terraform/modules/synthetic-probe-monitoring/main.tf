@@ -3,12 +3,12 @@ resource "google_logging_metric" "probe_failure" {
   name        = "paved_road_${var.environment}_synthetic_probe_failures"
   description = "Counts failed authenticated synthetic health-probe executions in ${var.environment}."
 
-  filter = <<-EOT
-    resource.type="cloud_scheduler_job"
-    resource.labels.job_id="${var.scheduler_job_name}"
-    jsonPayload.@type="type.googleapis.com/google.cloud.scheduler.logging.AttemptFinished"
-    httpRequest.status>=400
-  EOT
+  filter = join(" AND ", [
+    "resource.type=\"cloud_scheduler_job\"",
+    "resource.labels.job_id=\"${var.scheduler_job_name}\"",
+    "jsonPayload.@type=\"type.googleapis.com/google.cloud.scheduler.logging.AttemptFinished\"",
+    "httpRequest.status>=400",
+  ])
 
   metric_descriptor {
     metric_kind = "DELTA"
@@ -19,7 +19,19 @@ resource "google_logging_metric" "probe_failure" {
   }
 }
 
+resource "time_sleep" "metric_propagation" {
+  depends_on = [
+    google_logging_metric.probe_failure
+  ]
+
+  create_duration = "90s"
+}
+
 resource "google_monitoring_alert_policy" "probe_failure" {
+  depends_on = [
+    time_sleep.metric_propagation
+  ]
+
   project      = var.project_id
   display_name = "${title(var.environment)} Synthetic Probe Failure"
   combiner     = "OR"
