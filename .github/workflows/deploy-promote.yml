@@ -334,19 +334,83 @@ jobs:
       - name: Terraform apply
         run: terraform -chdir="${TF_WORKING_DIR}" apply -auto-approve tfplan
 
-      - name: Verify Cloud Run deployment
+      - name: Verify Cloud Run readiness and traffic
+        shell: bash
         run: |
-          gcloud run services describe "${{ vars.CLOUD_RUN_SERVICE }}" \
-            --platform=managed \
-            --region="${{ vars.GCP_REGION }}" \
-            --project="${{ vars.GCP_PROJECT_ID }}" \
-            --format="yaml(
-              metadata.name,
-              status.latestReadyRevisionName,
-              status.conditions,
-              spec.template.spec.containers[0].image,
-              spec.template.spec.serviceAccountName
-            )"
+          set -euo pipefail
+
+          SERVICE="${{ vars.CLOUD_RUN_SERVICE }}"
+          REGION="${{ vars.GCP_REGION }}"
+          PROJECT="${{ vars.GCP_PROJECT_ID }}"
+
+          SERVICE_JSON="$(
+            gcloud run services describe "${SERVICE}" \
+              --platform=managed \
+              --region="${REGION}" \
+              --project="${PROJECT}" \
+              --format=json
+          )"
+
+          LATEST_CREATED="$(
+            jq -r '.status.latestCreatedRevisionName // empty' \
+              <<<"${SERVICE_JSON}"
+          )"
+
+          LATEST_READY="$(
+            jq -r '.status.latestReadyRevisionName // empty' \
+              <<<"${SERVICE_JSON}"
+          )"
+
+          READY_STATUS="$(
+            jq -r '
+              .status.conditions[]
+              | select(.type == "Ready")
+              | .status
+            ' <<<"${SERVICE_JSON}"
+          )"
+
+          LATEST_TRAFFIC_PERCENT="$(
+            jq -r --arg revision "${LATEST_READY}" '
+              [
+                .status.traffic[]?
+                | select(
+                    .latestRevision == true or
+                    .revisionName == $revision or
+                    .revision == $revision
+                  )
+                | (.percent // 0)
+              ]
+              | add // 0
+            ' <<<"${SERVICE_JSON}"
+          )"
+
+          printf 'Service:                 %s\n' "${SERVICE}"
+          printf 'Latest created revision: %s\n' "${LATEST_CREATED}"
+          printf 'Latest ready revision:   %s\n' "${LATEST_READY}"
+          printf 'Ready condition:         %s\n' "${READY_STATUS}"
+          printf 'Latest revision traffic: %s%%\n' "${LATEST_TRAFFIC_PERCENT}"
+
+          if [ -z "${LATEST_CREATED}" ] || [ -z "${LATEST_READY}" ]; then
+            echo "::error::Cloud Run did not report created and ready revisions."
+            exit 1
+          fi
+
+          if [ "${LATEST_CREATED}" != "${LATEST_READY}" ]; then
+            echo "::error::Latest created revision is not the latest ready revision."
+            exit 1
+          fi
+
+          if [ "${READY_STATUS}" != "True" ]; then
+            echo "::error::Cloud Run service Ready condition is not True."
+            exit 1
+          fi
+
+          if [ "${LATEST_TRAFFIC_PERCENT}" != "100" ]; then
+            echo "::error::Latest ready revision is not receiving 100% of traffic."
+            exit 1
+          fi
+
+          echo "PASS: Cloud Run is ready and the latest revision receives 100% traffic."
 
       - name: Verify deployed immutable digest
         shell: bash
