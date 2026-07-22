@@ -105,6 +105,9 @@ jobs:
       - name: Install Cosign
         uses: sigstore/cosign-installer@v3
 
+      - name: Install SLSA verifier
+        uses: slsa-framework/slsa-verifier/actions/installer@v2.7.1
+
       - name: Resolve promotion references
         id: image
         shell: bash
@@ -160,6 +163,122 @@ jobs:
             echo "target_tag_uri=${TARGET_TAG_URI}"
             echo "target_digest_uri=${TARGET_DIGEST_URI}"
           } >> "${GITHUB_OUTPUT}"
+
+      - name: Verify Cloud Build source provenance
+        shell: bash
+        env:
+          SOURCE_DIGEST_URI: ${{ steps.image.outputs.source_digest_uri }}
+          SOURCE_PROJECT_ID: ${{ vars.SOURCE_PROJECT_ID }}
+        run: |
+          set -euo pipefail
+
+          PROVENANCE_FILE="${RUNNER_TEMP}/source-provenance.json"
+
+          gcloud artifacts docker images describe \
+            "${SOURCE_DIGEST_URI}" \
+            --project="${SOURCE_PROJECT_ID}" \
+            --show-provenance \
+            --format=json \
+            > "${PROVENANCE_FILE}"
+
+          SOURCE_URI="$(
+            python - "${PROVENANCE_FILE}" "${SOURCE_PROJECT_ID}" <<'PY'
+          import base64
+          import json
+          import sys
+
+          provenance_file = sys.argv[1]
+          source_project = sys.argv[2]
+          expected_prefix = f"gs://{source_project}_cloudbuild/source/"
+
+          with open(provenance_file, encoding="utf-8") as handle:
+              document = json.load(handle)
+
+          records = (
+              document
+              .get("provenance_summary", {})
+              .get("provenance", [])
+          )
+
+          if not records:
+              raise SystemExit(
+                  "No Cloud Build provenance records were found."
+              )
+
+          slsa_records = []
+          source_uris = set()
+
+          def collect_strings(value):
+              if isinstance(value, dict):
+                  for nested in value.values():
+                      collect_strings(nested)
+              elif isinstance(value, list):
+                  for nested in value:
+                      collect_strings(nested)
+              elif isinstance(value, str):
+                  if value.startswith(expected_prefix):
+                      source_uris.add(value)
+
+          for record in records:
+              build = record.get("build", {})
+              statement_metadata = (
+                  build.get("inTotoSlsaProvenanceV1")
+                  or build.get("intotoStatement")
+                  or {}
+              )
+
+              predicate_type = statement_metadata.get(
+                  "predicateType", ""
+              )
+
+              if predicate_type not in {
+                  "https://slsa.dev/provenance/v1",
+                  "https://slsa.dev/provenance/v0.1",
+              }:
+                  continue
+
+              slsa_records.append(predicate_type)
+
+              payload = record.get("envelope", {}).get("payload")
+              if not payload:
+                  continue
+
+              payload += "=" * (-len(payload) % 4)
+              statement = json.loads(
+                  base64.urlsafe_b64decode(payload).decode("utf-8")
+              )
+              collect_strings(statement)
+
+          if not slsa_records:
+              raise SystemExit(
+                  "No supported SLSA provenance record was found."
+              )
+
+          if len(source_uris) != 1:
+              raise SystemExit(
+                  "Expected exactly one trusted Cloud Build source archive; "
+                  f"found {len(source_uris)}."
+              )
+
+          print(next(iter(source_uris)))
+          PY
+          )"
+
+          if [ -z "${SOURCE_URI}" ]; then
+            echo "Cloud Build source URI resolution failed."
+            exit 1
+          fi
+
+          echo "Verifying provenance from trusted source archive: ${SOURCE_URI}"
+
+          timeout 5m slsa-verifier verify-image \
+            "${SOURCE_DIGEST_URI}" \
+            --provenance-path "${PROVENANCE_FILE}" \
+            --source-uri "${SOURCE_URI}" \
+            --builder-id \
+              "https://cloudbuild.googleapis.com/GoogleHostedWorker"
+
+          echo "Cloud Build source provenance verification passed."
 
       - name: Protect immutable release tag
         shell: bash
