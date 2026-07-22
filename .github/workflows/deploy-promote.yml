@@ -169,6 +169,7 @@ jobs:
         env:
           SOURCE_DIGEST_URI: ${{ steps.image.outputs.source_digest_uri }}
           SOURCE_PROJECT_ID: ${{ vars.SOURCE_PROJECT_ID }}
+          BUILD_SOURCE_PROJECT_ID: ${{ vars.BUILD_SOURCE_PROJECT_ID }}
         run: |
           set -euo pipefail
 
@@ -182,14 +183,18 @@ jobs:
             > "${PROVENANCE_FILE}"
 
           SOURCE_URI="$(
-            python - "${PROVENANCE_FILE}" "${SOURCE_PROJECT_ID}" <<'PY'
+            python - \
+              "${PROVENANCE_FILE}" \
+              "${BUILD_SOURCE_PROJECT_ID}" <<'PY'
           import base64
           import json
           import sys
 
           provenance_file = sys.argv[1]
-          source_project = sys.argv[2]
-          expected_prefix = f"gs://{source_project}_cloudbuild/source/"
+          build_source_project = sys.argv[2]
+          expected_prefix = (
+              f"gs://{build_source_project}_cloudbuild/source/"
+          )
 
           with open(provenance_file, encoding="utf-8") as handle:
               document = json.load(handle)
