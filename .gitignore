@@ -39,3 +39,8 @@ grafana-monitoring-reader.json
 __pycache__/
 *.py[cod]
 .venv/
+
+# Local supply-chain audit outputs
+attestations.jsonl
+*-provenance.json
+*-build-metadata.json
