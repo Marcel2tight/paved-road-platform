@@ -114,6 +114,7 @@ jobs:
         env:
           RELEASE_TAG: ${{ inputs.release_tag }}
           SOURCE_PROJECT_ID: ${{ vars.SOURCE_PROJECT_ID }}
+          BUILD_SOURCE_PROJECT_ID: ${{ vars.BUILD_SOURCE_PROJECT_ID }}
           TARGET_PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
           REGION: ${{ vars.GCP_REGION }}
           REPOSITORY: ${{ vars.IMAGE_REPOSITORY }}
@@ -154,12 +155,14 @@ jobs:
 
           IMAGE_DIGEST="${CONFIGURED_IMAGE##*@}"
           SOURCE_DIGEST_URI="${REGION}-docker.pkg.dev/${SOURCE_PROJECT_ID}/${REPOSITORY}/${IMAGE_NAME}@${IMAGE_DIGEST}"
+          BUILD_DIGEST_URI="${REGION}-docker.pkg.dev/${BUILD_SOURCE_PROJECT_ID}/${REPOSITORY}/${IMAGE_NAME}@${IMAGE_DIGEST}"
           TARGET_TAG_URI="${TARGET_REPOSITORY}:${RELEASE_TAG}"
           TARGET_DIGEST_URI="${TARGET_REPOSITORY}@${IMAGE_DIGEST}"
 
           {
             echo "digest=${IMAGE_DIGEST}"
             echo "source_digest_uri=${SOURCE_DIGEST_URI}"
+            echo "build_digest_uri=${BUILD_DIGEST_URI}"
             echo "target_tag_uri=${TARGET_TAG_URI}"
             echo "target_digest_uri=${TARGET_DIGEST_URI}"
           } >> "${GITHUB_OUTPUT}"
@@ -167,8 +170,7 @@ jobs:
       - name: Verify Cloud Build source provenance
         shell: bash
         env:
-          SOURCE_DIGEST_URI: ${{ steps.image.outputs.source_digest_uri }}
-          SOURCE_PROJECT_ID: ${{ vars.SOURCE_PROJECT_ID }}
+          BUILD_DIGEST_URI: ${{ steps.image.outputs.build_digest_uri }}
           BUILD_SOURCE_PROJECT_ID: ${{ vars.BUILD_SOURCE_PROJECT_ID }}
         run: |
           set -euo pipefail
@@ -176,8 +178,8 @@ jobs:
           PROVENANCE_FILE="${RUNNER_TEMP}/source-provenance.json"
 
           gcloud artifacts docker images describe \
-            "${SOURCE_DIGEST_URI}" \
-            --project="${SOURCE_PROJECT_ID}" \
+            "${BUILD_DIGEST_URI}" \
+            --project="${BUILD_SOURCE_PROJECT_ID}" \
             --show-provenance \
             --format=json \
             > "${PROVENANCE_FILE}"
@@ -277,7 +279,7 @@ jobs:
           echo "Verifying provenance from trusted source archive: ${SOURCE_URI}"
 
           timeout 5m slsa-verifier verify-image \
-            "${SOURCE_DIGEST_URI}" \
+            "${BUILD_DIGEST_URI}" \
             --provenance-path "${PROVENANCE_FILE}" \
             --source-uri "${SOURCE_URI}" \
             --builder-id \
