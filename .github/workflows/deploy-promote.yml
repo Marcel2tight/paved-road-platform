@@ -457,6 +457,64 @@ jobs:
 
           echo "PASS: Cloud Run is running the approved immutable digest."
 
+      - name: Verify authenticated application health
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          PROJECT="${{ vars.GCP_PROJECT_ID }}"
+          REGION="${{ vars.GCP_REGION }}"
+          SERVICE="${{ vars.CLOUD_RUN_SERVICE }}"
+          SCHEDULER_JOB="${SERVICE}-health-probe"
+
+          PROBE_STARTED_AT="$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
+
+          printf 'Project:          %s\n' "${PROJECT}"
+          printf 'Region:           %s\n' "${REGION}"
+          printf 'Scheduler job:    %s\n' "${SCHEDULER_JOB}"
+          printf 'Probe started at: %s\n' "${PROBE_STARTED_AT}"
+
+          gcloud scheduler jobs run "${SCHEDULER_JOB}" \
+            --project="${PROJECT}" \
+            --location="${REGION}"
+
+          PROBE_STATUS=""
+
+          for ATTEMPT in {1..24}; do
+            PROBE_STATUS="$(
+              gcloud logging read \
+                "resource.type=\"cloud_scheduler_job\"
+                 AND resource.labels.job_id=\"${SCHEDULER_JOB}\"
+                 AND jsonPayload.@type=\"type.googleapis.com/google.cloud.scheduler.logging.AttemptFinished\"
+                 AND timestamp>=\"${PROBE_STARTED_AT}\"" \
+                --project="${PROJECT}" \
+                --limit=1 \
+                --order=desc \
+                --format='value(httpRequest.status)'
+            )"
+
+            if [ -n "${PROBE_STATUS}" ]; then
+              break
+            fi
+
+            printf 'Waiting for probe result (%s/24)...\n' "${ATTEMPT}"
+            sleep 5
+          done
+
+          printf 'Fresh probe HTTP status: %s\n' "${PROBE_STATUS:-not found}"
+
+          if [ -z "${PROBE_STATUS}" ]; then
+            echo "::error::No completed health-probe execution was found within 120 seconds."
+            exit 1
+          fi
+
+          if [ "${PROBE_STATUS}" != "200" ]; then
+            echo "::error::Authenticated /health probe returned HTTP ${PROBE_STATUS}; expected 200."
+            exit 1
+          fi
+
+          echo "PASS: Authenticated internal /health probe returned HTTP 200."
+
       - name: Notify Slack (Promotion Success)
         if: success()
         run: |
