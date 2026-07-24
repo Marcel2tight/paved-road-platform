@@ -356,7 +356,6 @@ jobs:
           timeout 5m slsa-verifier verify-image \
             "${BUILD_DIGEST_URI}" \
             --provenance-path "${PROVENANCE_FILE}" \
-            --source-uri "${SOURCE_URI}" \
             --builder-id \
               "https://cloudbuild.googleapis.com/GoogleHostedWorker"
 
