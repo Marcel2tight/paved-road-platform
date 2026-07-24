@@ -373,6 +373,7 @@ jobs:
                     any(
                       .predicate.buildDefinition.resolvedDependencies[]?;
                       .uri == $source_uri
+                      or (.uri | startswith($source_uri + "#"))
                     )
                   )
               ]
