@@ -151,17 +151,53 @@ jobs:
           IMAGE_TAG_URI: ${{ env.IMAGE_REPOSITORY }}:${{ env.RELEASE_TAG }}
         run: |
           set -euo pipefail
+
           BUILD_OUTPUT="${RUNNER_TEMP}/cloud-build.json"
 
           gcloud builds submit app \
             --tag "${IMAGE_TAG_URI}" \
             --project="${PROJECT_ID}" \
-            --suppress-logs \
+            --async \
             --quiet \
             --format=json > "${BUILD_OUTPUT}"
 
           BUILD_ID="$(jq -er '.id' "${BUILD_OUTPUT}")"
           echo "build_id=${BUILD_ID}" >> "${GITHUB_OUTPUT}"
+          echo "Cloud Build submitted: ${BUILD_ID}"
+
+          for attempt in {1..90}; do
+            BUILD_STATUS="$(
+              gcloud builds describe "${BUILD_ID}" \
+                --project="${PROJECT_ID}" \
+                --format='value(status)'
+            )"
+
+            echo "Cloud Build status: ${BUILD_STATUS}"
+
+            case "${BUILD_STATUS}" in
+              SUCCESS)
+                echo "Cloud Build completed successfully."
+                exit 0
+                ;;
+              FAILURE|INTERNAL_ERROR|TIMEOUT|CANCELLED|EXPIRED)
+                echo "::error::Cloud Build ${BUILD_ID} ended with status ${BUILD_STATUS}."
+                gcloud builds describe "${BUILD_ID}" \
+                  --project="${PROJECT_ID}" \
+                  --format='yaml(id,status,statusDetail,failureInfo,results.images)'
+                exit 1
+                ;;
+              QUEUED|WORKING|PENDING|"")
+                sleep 5
+                ;;
+              *)
+                echo "::warning::Unexpected Cloud Build status: ${BUILD_STATUS}"
+                sleep 5
+                ;;
+            esac
+          done
+
+          echo "::error::Timed out waiting for Cloud Build ${BUILD_ID}."
+          exit 1
 
       - name: Resolve immutable digest and independent build source
         id: image
