@@ -242,7 +242,7 @@ jobs:
         run: syft "${{ steps.image.outputs.digest_uri }}" -o spdx-json=sbom.spdx.json
 
       - name: Scan immutable image
-        uses: aquasecurity/trivy-action@76071ef0d7ec797419534a183b498b4d6366cf37 # v0.28.0
+        uses: aquasecurity/trivy-action@76071ef0d7ec797419534a183b498b4d6366cf37 # v0.31.0
         with:
           image-ref: ${{ steps.image.outputs.digest_uri }}
           format: table
@@ -250,6 +250,7 @@ jobs:
           ignore-unfixed: true
           vuln-type: "os,library"
           severity: "CRITICAL,HIGH"
+          trivy-version: "v0.69.2"
 
       - name: Upload human-readable SBOM
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
