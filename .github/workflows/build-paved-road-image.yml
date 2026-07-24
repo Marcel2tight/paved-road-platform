@@ -115,6 +115,35 @@ jobs:
             exit 1
           fi
 
+      - name: Diagnose Cloud Build access
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          echo "Active identity:"
+          gcloud auth list \
+            --filter=status:ACTIVE \
+            --format="value(account)"
+
+          echo "Configured project:"
+          gcloud config get-value project
+
+          echo "Bucket metadata:"
+          gcloud storage buckets describe \
+            gs://${{ env.PROJECT_ID }}_cloudbuild \
+            --format="yaml(name,location,projectNumber)"
+
+          echo "Bucket listing:"
+          gcloud storage ls \
+            gs://${{ env.PROJECT_ID }}_cloudbuild
+
+          echo "Direct upload test:"
+          printf 'Cloud Build staging permission test\n' > cloud-build-access-test.txt
+
+          gcloud storage cp \
+            cloud-build-access-test.txt \
+            gs://${{ env.PROJECT_ID }}_cloudbuild/source/cloud-build-access-test-${GITHUB_RUN_ID}.txt
+
       - name: Build and push application image
         id: build
         shell: bash
