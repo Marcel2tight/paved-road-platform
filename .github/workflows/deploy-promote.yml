@@ -152,9 +152,6 @@ jobs:
       - name: Install Cosign
         uses: sigstore/cosign-installer@3454372f43399081ed03b604cb2d021dabca52bb # v3.8.2
 
-      - name: Install SLSA verifier
-        uses: slsa-framework/slsa-verifier/actions/installer@ea584f4502babc6f60d9bc799dbbb13c1caa9ee6 # v2.7.1
-
       - name: Bind plan execution context
         id: context
         shell: bash
@@ -353,13 +350,39 @@ jobs:
               ;;
           esac
 
-          timeout 5m slsa-verifier verify-image \
-            "${BUILD_DIGEST_URI}" \
-            --provenance-path "${PROVENANCE_FILE}" \
-            --builder-id \
-              "https://cloudbuild.googleapis.com/GoogleHostedWorker"
+          EXPECTED_DIGEST_HEX="${EXPECTED_DIGEST#sha256:}"
+          EXPECTED_BUILDER="https://cloudbuild.googleapis.com/GoogleHostedWorker"
+          EXPECTED_BUILD_TYPE="https://cloud.google.com/build/gcb-buildtypes/google-worker/v1"
+          EXPECTED_PREDICATE_TYPE="https://slsa.dev/provenance/v1"
 
-          echo "Signed release metadata and Cloud Build provenance verification passed."
+          jq -e \
+            --arg digest "${EXPECTED_DIGEST_HEX}" \
+            --arg builder "${EXPECTED_BUILDER}" \
+            --arg build_type "${EXPECTED_BUILD_TYPE}" \
+            --arg predicate_type "${EXPECTED_PREDICATE_TYPE}" \
+            --arg source_uri "${SOURCE_URI}" '
+              [
+                .provenance_summary.provenance[]?
+                | .build.inTotoSlsaProvenanceV1?
+                | select(. != null)
+                | select(.predicateType == $predicate_type)
+                | select(.predicate.runDetails.builder.id == $builder)
+                | select(.predicate.buildDefinition.buildType == $build_type)
+                | select(any(.subject[]?; .digest.sha256 == $digest))
+                | select(
+                    any(
+                      .predicate.buildDefinition.resolvedDependencies[]?;
+                      .uri == $source_uri
+                    )
+                  )
+              ]
+              | length > 0
+            ' "${PROVENANCE_FILE}" >/dev/null || {
+              echo "::error::Cloud Build provenance verification failed."
+              exit 1
+            }
+
+          echo "Signature, attestations, and Cloud Build provenance verification passed."
 
       - name: Enforce immutable Artifact Registry tags
         shell: bash
