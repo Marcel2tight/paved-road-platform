@@ -156,7 +156,7 @@ jobs:
           gcloud builds submit app \
             --tag "${IMAGE_TAG_URI}" \
             --project="${PROJECT_ID}" \
-            --verbosity=debug \
+            --suppress-logs \
             --quiet \
             --format=json > "${BUILD_OUTPUT}"
 
