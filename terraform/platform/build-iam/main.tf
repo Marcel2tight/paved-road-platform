@@ -56,3 +56,9 @@ resource "google_storage_bucket_iam_member" "cloud_build_source_object_admin" {
   role   = "roles/storage.objectAdmin"
   member = "serviceAccount:${google_service_account.paved_road_builder.email}"
 }
+
+resource "google_service_account_iam_member" "builder_can_act_as_cloud_build_runtime" {
+  service_account_id = "projects/${var.build_project_id}/serviceAccounts/915035381641-compute@developer.gserviceaccount.com"
+  role               = "roles/iam.serviceAccountUser"
+  member             = "serviceAccount:${google_service_account.paved_road_builder.email}"
+}
