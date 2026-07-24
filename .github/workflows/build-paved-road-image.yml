@@ -32,6 +32,8 @@ jobs:
       IMAGE_NAME: ${{ vars.IMAGE_NAME }}
       IMAGE_REPOSITORY: >-
         ${{ vars.GCP_REGION }}-docker.pkg.dev/${{ vars.GCP_PROJECT_ID }}/${{ vars.IMAGE_REPOSITORY }}/${{ vars.IMAGE_NAME }}
+      COSIGN_REPOSITORY: >-
+        ${{ vars.GCP_REGION }}-docker.pkg.dev/${{ vars.GCP_PROJECT_ID }}/paved-road-trust/${{ vars.IMAGE_NAME }}
       RELEASE_TAG: ${{ inputs.release_tag }}
       RELEASE_METADATA_TYPE: https://paved-road-platform.dev/attestations/release-metadata/v1
 
