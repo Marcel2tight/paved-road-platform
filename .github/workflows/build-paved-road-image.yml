@@ -152,11 +152,14 @@ jobs:
         run: |
           set -euo pipefail
           BUILD_OUTPUT="${RUNNER_TEMP}/cloud-build.json"
+
           gcloud builds submit app \
             --tag "${IMAGE_TAG_URI}" \
             --project="${PROJECT_ID}" \
+            --verbosity=debug \
             --quiet \
             --format=json > "${BUILD_OUTPUT}"
+
           BUILD_ID="$(jq -er '.id' "${BUILD_OUTPUT}")"
           echo "build_id=${BUILD_ID}" >> "${GITHUB_OUTPUT}"
 
