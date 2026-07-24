@@ -31,6 +31,8 @@ concurrency:
 
 env:
   RELEASE_METADATA_TYPE: https://paved-road-platform.dev/attestations/release-metadata/v1
+  COSIGN_REPOSITORY: >-
+    us-central1-docker.pkg.dev/imposing-fx-413205/paved-road-trust/paved-road-platform
 
 jobs:
   trust-gate:
@@ -270,7 +272,7 @@ jobs:
             echo "target_digest_uri=${TARGET_DIGEST_URI}"
           } >> "${GITHUB_OUTPUT}"
 
-      - name: Verify signed release metadata and Cloud Build provenance
+      - name: Verify signature, attestations, and Cloud Build provenance
         shell: bash
         env:
           BUILD_DIGEST_URI: ${{ steps.image.outputs.build_digest_uri }}
@@ -280,6 +282,22 @@ jobs:
           TRUSTED_BUILD_IDENTITY: ${{ github.server_url }}/${{ github.repository }}/.github/workflows/build-paved-road-image.yml@refs/heads/main
         run: |
           set -euo pipefail
+
+          COMMON_ARGS=(
+            --certificate-identity "${TRUSTED_BUILD_IDENTITY}"
+            --certificate-oidc-issuer "https://token.actions.githubusercontent.com"
+          )
+
+          timeout 5m cosign verify \
+            "${BUILD_DIGEST_URI}" \
+            "${COMMON_ARGS[@]}" \
+            >/dev/null
+
+          timeout 5m cosign verify-attestation \
+            "${BUILD_DIGEST_URI}" \
+            --type spdxjson \
+            "${COMMON_ARGS[@]}" \
+            >/dev/null
 
           PROVENANCE_FILE="${RUNNER_TEMP}/source-provenance.json"
           ATTESTATION_FILE="${RUNNER_TEMP}/verified-release-metadata.json"
@@ -294,8 +312,7 @@ jobs:
           timeout 5m cosign verify-attestation \
             "${BUILD_DIGEST_URI}" \
             --type "${RELEASE_METADATA_TYPE}" \
-            --certificate-identity "${TRUSTED_BUILD_IDENTITY}" \
-            --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+            "${COMMON_ARGS[@]}" \
             > "${ATTESTATION_FILE}"
 
           PREDICATE="$(
