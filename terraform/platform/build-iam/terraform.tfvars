@@ -1,0 +1,7 @@
+build_project_id                 = "imposing-fx-413205"
+region                           = "us-central1"
+build_repository                 = "paved-road-containers"
+builder_service_account_id       = "paved-road-builder"
+workload_identity_project_number = "915035381641"
+workload_identity_pool_id        = "github-pool"
+github_repository                = "Marcel2tight/paved-road-platform"
