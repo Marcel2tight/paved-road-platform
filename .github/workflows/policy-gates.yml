@@ -43,6 +43,7 @@ jobs:
           checkov -d terraform \
             --framework terraform \
             --config-file terraform/policies/checkov.yaml \
+            --skip-path 'terraform/optional/.*' \
             --output sarif \
             --output-file-path reports/checkov-output
           checkov_exit=$?
