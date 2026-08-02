@@ -95,10 +95,12 @@ jobs:
       - name: Scan optional architectures
         continue-on-error: true
         run: |
+          rm -rf reports/checkov-optional-output
+
           checkov -d terraform/optional \
             --framework terraform \
-            --compact \
-            --quiet
+            --output sarif \
+            --output-file-path reports/checkov-optional-output
 
       - name: Install tfsec
         run: |
