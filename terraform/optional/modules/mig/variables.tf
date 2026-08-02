@@ -47,12 +47,6 @@ variable "subnetwork" {
   type        = string
 }
 
-variable "assign_public_ip" {
-  description = "Whether to assign a public IP to instances"
-  type        = bool
-  default     = false
-}
-
 variable "service_account_email" {
   description = "Service account email for VM instances"
   type        = string

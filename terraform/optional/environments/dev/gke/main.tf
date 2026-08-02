@@ -17,6 +17,7 @@ provider "google" {
 module "gke_app" {
   source = "../../../modules/gke"
 
+  project_id              = var.project_id
   cluster_name            = var.cluster_name
   node_pool_name          = var.node_pool_name
   region                  = var.region

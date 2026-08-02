@@ -26,6 +26,8 @@ resource "google_artifact_registry_repository_iam_member" "builder_writer" {
 }
 
 resource "google_project_iam_member" "cloud_build_editor" {
+  # checkov:skip=CKV_GCP_49: Build submission is paired with resource-scoped actAs access to the designated Cloud Build runtime service account.
+
   project = var.build_project_id
   role    = "roles/cloudbuild.builds.editor"
   member  = "serviceAccount:${google_service_account.paved_road_builder.email}"
