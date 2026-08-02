@@ -37,14 +37,13 @@ jobs:
         id: checkov
         run: |
           mkdir -p reports
-          rm -f reports/checkov.sarif
+          rm -rf reports/checkov.sarif
 
           set +e
           checkov -d terraform \
             --framework terraform \
             --config-file terraform/policies/checkov.yaml \
-            --output sarif \
-            --output-file-path reports/checkov.sarif
+            --output sarif > reports/checkov.sarif
           checkov_exit=$?
           set -e
 
