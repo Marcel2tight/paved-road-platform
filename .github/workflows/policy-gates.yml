@@ -33,49 +33,151 @@ jobs:
           python -m pip install --upgrade pip
           pip install checkov
 
-      - name: Run Checkov
+      - name: Run blocking Checkov scan
+        id: checkov
         run: |
           mkdir -p reports
+          rm -f reports/checkov.sarif
+
+          set +e
           checkov -d terraform \
             --framework terraform \
             --config-file terraform/policies/checkov.yaml \
             --output sarif \
-            --output-file-path reports/checkov.sarif || true
+            --output-file-path reports/checkov.sarif
+          checkov_exit=$?
+          set -e
+
+          printf 'Checkov exit status: %s\n' "$checkov_exit"
+
+          if [ "$checkov_exit" -gt 1 ]; then
+            echo "::error::Checkov failed to complete successfully"
+            exit "$checkov_exit"
+          fi
+
+          if [ ! -s reports/checkov.sarif ]; then
+            echo "::error::Checkov did not produce a SARIF report"
+            exit 1
+          fi
+
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          report = Path("reports/checkov.sarif")
+
+          try:
+              data = json.loads(report.read_text(encoding="utf-8"))
+          except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+              raise SystemExit(f"Invalid Checkov SARIF report: {exc}")
+
+          if not isinstance(data.get("runs"), list):
+              raise SystemExit("Invalid Checkov SARIF report: missing runs array")
+
+          print("Checkov SARIF report is valid")
+          PY
+
+      - name: Scan optional architectures
+        continue-on-error: true
+        run: |
+          checkov -d terraform/optional \
+            --framework terraform \
+            --compact \
+            --quiet
 
       - name: Install tfsec
         run: |
           curl -s https://raw.githubusercontent.com/aquasecurity/tfsec/master/scripts/install_linux.sh | bash
 
-      - name: Run tfsec
+      - name: Run blocking tfsec scan
         run: |
           mkdir -p reports
+          rm -f reports/tfsec.sarif
+
+          set +e
           tfsec terraform \
+            --exclude-path terraform/optional \
             --format sarif \
-            --out reports/tfsec.sarif || true
+            --out reports/tfsec.sarif
+          tfsec_exit=$?
+          set -e
+
+          printf 'tfsec exit status: %s\n' "$tfsec_exit"
+
+          if [ "$tfsec_exit" -gt 1 ]; then
+            echo "::error::tfsec failed to complete successfully"
+            exit "$tfsec_exit"
+          fi
+
+          if [ ! -s reports/tfsec.sarif ]; then
+            echo "::error::tfsec did not produce a SARIF report"
+            exit 1
+          fi
+
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          report = Path("reports/tfsec.sarif")
+
+          try:
+              data = json.loads(report.read_text(encoding="utf-8"))
+          except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+              raise SystemExit(f"Invalid tfsec SARIF report: {exc}")
+
+          if not isinstance(data.get("runs"), list):
+              raise SystemExit(
+                  "Invalid tfsec SARIF report: missing runs array"
+              )
+
+          print("tfsec SARIF report is valid")
+          PY
 
       - name: Enforce Policy Gate
         run: |
-          failed=0
+          python - <<'PY'
+          import json
+          from pathlib import Path
 
-          if [ -f reports/checkov.sarif ]; then
-            if grep -q '"severity":"HIGH"' reports/checkov.sarif || \
-               grep -q '"severity":"CRITICAL"' reports/checkov.sarif || \
-               grep -q '"level":"error"' reports/checkov.sarif; then
-              echo "Blocking findings detected in Checkov"
-              failed=1
-            fi
-          fi
+          reports = {
+              "Checkov": Path("reports/checkov.sarif"),
+              "tfsec": Path("reports/tfsec.sarif"),
+          }
 
-          if [ -f reports/tfsec.sarif ]; then
-            if grep -q '"severity":"HIGH"' reports/tfsec.sarif || \
-               grep -q '"severity":"CRITICAL"' reports/tfsec.sarif || \
-               grep -q '"level":"error"' reports/tfsec.sarif; then
-              echo "Blocking findings detected in tfsec"
-              failed=1
-            fi
-          fi
+          failed = False
 
-          if [ "$failed" -ne 0 ]; then
-            echo "Policy gate failed"
-            exit 1
-          fi
+          for scanner, report in reports.items():
+              if not report.is_file():
+                  raise SystemExit(f"{scanner} SARIF report is missing")
+
+              try:
+                  data = json.loads(report.read_text(encoding="utf-8"))
+              except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+                  raise SystemExit(f"Invalid {scanner} SARIF report: {exc}")
+
+              runs = data.get("runs")
+              if not isinstance(runs, list):
+                  raise SystemExit(
+                      f"Invalid {scanner} SARIF report: missing runs array"
+                  )
+
+              findings = [
+                  result
+                  for run in runs
+                  if isinstance(run, dict)
+                  for result in run.get("results", [])
+                  if isinstance(result, dict)
+              ]
+
+              if findings:
+                  print(
+                      f"::error::{scanner} reported "
+                      f"{len(findings)} blocking finding(s)"
+                  )
+                  failed = True
+              else:
+                  print(f"{scanner}: no blocking findings")
+
+          if failed:
+              raise SystemExit("Policy gate failed")
+          PY

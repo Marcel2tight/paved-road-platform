@@ -17,14 +17,13 @@ resource "google_compute_instance_template" "this" {
   network_interface {
     network    = var.network
     subnetwork = var.subnetwork
-
-    dynamic "access_config" {
-      for_each = var.assign_public_ip ? [1] : []
-      content {}
-    }
   }
 
   metadata_startup_script = var.startup_script
+
+  metadata = {
+    block-project-ssh-keys = "TRUE"
+  }
 
   service_account {
     email  = var.service_account_email
