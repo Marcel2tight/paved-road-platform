@@ -37,14 +37,13 @@ jobs:
         id: checkov
         run: |
           mkdir -p reports
-          rm -f reports/checkov.sarif
+          rm -rf reports/checkov.sarif
 
           set +e
           checkov -d terraform \
             --framework terraform \
             --config-file terraform/policies/checkov.yaml \
-            --output sarif \
-            --output-file-path reports/checkov.sarif
+            --output sarif > reports/checkov.sarif
           checkov_exit=$?
           set -e
 
@@ -72,7 +71,9 @@ jobs:
               raise SystemExit(f"Invalid Checkov SARIF report: {exc}")
 
           if not isinstance(data.get("runs"), list):
-              raise SystemExit("Invalid Checkov SARIF report: missing runs array")
+              raise SystemExit(
+                  "Invalid Checkov SARIF report: missing runs array"
+              )
 
           print("Checkov SARIF report is valid")
           PY
