@@ -37,13 +37,14 @@ jobs:
         id: checkov
         run: |
           mkdir -p reports
-          rm -rf reports/checkov.sarif
+          rm -rf reports/checkov-output reports/checkov.sarif
 
           set +e
           checkov -d terraform \
             --framework terraform \
             --config-file terraform/policies/checkov.yaml \
-            --output sarif > reports/checkov.sarif
+            --output sarif \
+            --output-file-path reports/checkov-output
           checkov_exit=$?
           set -e
 
@@ -53,6 +54,21 @@ jobs:
             echo "::error::Checkov failed to complete successfully"
             exit "$checkov_exit"
           fi
+
+          mapfile -t sarif_files < <(
+            find reports/checkov-output \
+              -type f \
+              -name '*.sarif' \
+              -print
+          )
+
+          if [ "${#sarif_files[@]}" -ne 1 ]; then
+            echo "::error::Expected exactly one Checkov SARIF file; found ${#sarif_files[@]}"
+            find reports/checkov-output -maxdepth 2 -type f -print || true
+            exit 1
+          fi
+
+          cp "${sarif_files[0]}" reports/checkov.sarif
 
           if [ ! -s reports/checkov.sarif ]; then
             echo "::error::Checkov did not produce a SARIF report"
