@@ -185,7 +185,15 @@ jobs:
                   if isinstance(run, dict)
                   for result in run.get("results", [])
                   if isinstance(result, dict)
+                  and result.get("level", "warning") in {"error", "warning"}
+                  and not result.get("suppressions")
               ]
+
+              for result in findings:
+                  rule_id = result.get("ruleId", "unknown")
+                  level = result.get("level", "unknown")
+                  message = result.get("message", {}).get("text", "No message")
+                  print(f"::{level}::{scanner} {rule_id}: {message}")
 
               if findings:
                   print(
