@@ -47,3 +47,21 @@ variable "budget_notification_topic_name" {
   type        = string
   default     = "paved-road-billing-budget-notifications"
 }
+
+variable "budget_notification_subscription_name" {
+  description = "Subscription receiving Cloud Billing budget notification events."
+  type        = string
+  default     = "paved-road-billing-budget-notifications-subscription"
+}
+
+variable "budget_notification_dead_letter_topic_name" {
+  description = "Topic receiving budget events that exceed the delivery-attempt limit."
+  type        = string
+  default     = "paved-road-billing-budget-notifications-dlq"
+}
+
+variable "budget_notification_dead_letter_subscription_name" {
+  description = "Subscription retaining failed budget events forwarded to the dead-letter topic."
+  type        = string
+  default     = "paved-road-billing-budget-notifications-dlq-subscription"
+}

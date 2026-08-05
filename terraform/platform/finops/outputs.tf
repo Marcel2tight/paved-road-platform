@@ -17,3 +17,18 @@ output "management_project_id" {
   description = "Project hosting the centralized FinOps resources."
   value       = var.management_project_id
 }
+
+output "budget_notification_subscription_id" {
+  description = "Fully qualified ID of the subscription receiving billing budget events."
+  value       = google_pubsub_subscription.budget_notifications.id
+}
+
+output "budget_notification_dead_letter_topic_id" {
+  description = "Fully qualified ID of the topic receiving repeatedly failed budget events."
+  value       = google_pubsub_topic.budget_notifications_dead_letter.id
+}
+
+output "budget_notification_dead_letter_subscription_id" {
+  description = "Fully qualified ID of the subscription retaining dead-lettered budget events."
+  value       = google_pubsub_subscription.budget_notifications_dead_letter.id
+}
