@@ -32,3 +32,13 @@ output "budget_notification_dead_letter_subscription_id" {
   description = "Fully qualified ID of the subscription retaining dead-lettered budget events."
   value       = google_pubsub_subscription.budget_notifications_dead_letter.id
 }
+
+output "finops_firestore_database_name" {
+  description = "Firestore database used for FinOps budget-event deduplication."
+  value       = google_firestore_database.finops_events.name
+}
+
+output "finops_budget_consumer_service_account_email" {
+  description = "Runtime service-account email for the FinOps budget consumer."
+  value       = google_service_account.finops_budget_consumer.email
+}
