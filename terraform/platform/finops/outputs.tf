@@ -42,3 +42,18 @@ output "finops_budget_consumer_service_account_email" {
   description = "Runtime service-account email for the FinOps budget consumer."
   value       = google_service_account.finops_budget_consumer.email
 }
+
+output "finops_budget_consumer_service_name" {
+  description = "Name of the FinOps budget consumer Cloud Run service."
+  value       = module.finops_budget_consumer.service_name
+}
+
+output "finops_budget_consumer_service_uri" {
+  description = "URI of the FinOps budget consumer Cloud Run service."
+  value       = module.finops_budget_consumer.service_uri
+}
+
+output "finops_budget_consumer_service_location" {
+  description = "Location of the FinOps budget consumer Cloud Run service."
+  value       = var.region
+}
