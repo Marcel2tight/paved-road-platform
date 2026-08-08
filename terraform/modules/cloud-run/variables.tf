@@ -66,6 +66,29 @@ variable "env_vars" {
   default     = {}
 }
 
+variable "secret_env_vars" {
+  description = "Secret Manager-backed environment variables for the container."
+  type = map(object({
+    secret  = string
+    version = string
+  }))
+  default = {}
+}
+
+variable "startup_probe_path" {
+  description = "HTTP path used for the optional startup probe."
+  type        = string
+  default     = null
+  nullable    = true
+}
+
+variable "liveness_probe_path" {
+  description = "HTTP path used for the optional liveness probe."
+  type        = string
+  default     = null
+  nullable    = true
+}
+
 variable "labels" {
   description = "Resource labels"
   type        = map(string)

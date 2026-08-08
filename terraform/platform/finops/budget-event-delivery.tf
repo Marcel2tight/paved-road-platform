@@ -34,7 +34,16 @@ resource "google_pubsub_subscription" "budget_notifications" {
   message_retention_duration   = "604800s"
   retain_acked_messages        = false
   enable_message_ordering      = false
-  enable_exactly_once_delivery = true
+  enable_exactly_once_delivery = false
+
+  push_config {
+    push_endpoint = module.finops_budget_consumer.service_uri
+
+    oidc_token {
+      service_account_email = google_service_account.finops_budget_push_auth.email
+      audience              = module.finops_budget_consumer.service_uri
+    }
+  }
 
   expiration_policy {
     ttl = ""
@@ -61,6 +70,8 @@ resource "google_pubsub_subscription" "budget_notifications" {
 
   depends_on = [
     google_pubsub_topic_iam_member.dead_letter_publisher,
+    google_service_account_iam_member.pubsub_push_token_creator,
+    google_cloud_run_v2_service_iam_member.finops_budget_consumer_invoker,
   ]
 }
 

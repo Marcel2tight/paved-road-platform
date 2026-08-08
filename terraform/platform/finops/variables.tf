@@ -65,3 +65,16 @@ variable "budget_notification_dead_letter_subscription_name" {
   type        = string
   default     = "paved-road-billing-budget-notifications-dlq-subscription"
 }
+
+variable "budget_consumer_image" {
+  description = "Immutable Artifact Registry image URI for the FinOps budget consumer."
+  type        = string
+
+  validation {
+    condition = can(regex(
+      "^us-central1-docker\\.pkg\\.dev/[^/]+/[^/]+/[^/@]+@sha256:[0-9a-f]{64}$",
+      var.budget_consumer_image,
+    ))
+    error_message = "budget_consumer_image must be a us-central1 Artifact Registry URI pinned by sha256 digest."
+  }
+}
