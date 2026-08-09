@@ -71,6 +71,7 @@ resource "google_pubsub_subscription" "budget_notifications" {
   depends_on = [
     google_pubsub_topic_iam_member.dead_letter_publisher,
     google_service_account_iam_member.pubsub_push_token_creator,
+    google_service_account_iam_member.terraform_deployer_push_auth_user,
     google_cloud_run_v2_service_iam_member.finops_budget_consumer_invoker,
   ]
 }

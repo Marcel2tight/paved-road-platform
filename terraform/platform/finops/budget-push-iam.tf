@@ -9,6 +9,12 @@ resource "google_service_account" "finops_budget_push_auth" {
   ]
 }
 
+resource "google_service_account_iam_member" "terraform_deployer_push_auth_user" {
+  service_account_id = google_service_account.finops_budget_push_auth.name
+  role               = "roles/iam.serviceAccountUser"
+  member             = "serviceAccount:${var.terraform_deployer_service_account_email}"
+}
+
 resource "google_service_account_iam_member" "pubsub_push_token_creator" {
   service_account_id = google_service_account.finops_budget_push_auth.name
   role               = "roles/iam.serviceAccountTokenCreator"

@@ -78,3 +78,13 @@ variable "budget_consumer_image" {
     error_message = "budget_consumer_image must be a us-central1 Artifact Registry URI pinned by sha256 digest."
   }
 }
+
+variable "terraform_deployer_service_account_email" {
+  description = "Service-account email used by Terraform to deploy the FinOps infrastructure."
+  type        = string
+
+  validation {
+    condition     = can(regex("^[^@]+@[^@]+\\.iam\\.gserviceaccount\\.com$", var.terraform_deployer_service_account_email))
+    error_message = "terraform_deployer_service_account_email must be a valid Google service-account email."
+  }
+}
