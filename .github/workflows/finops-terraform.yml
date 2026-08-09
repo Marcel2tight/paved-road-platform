@@ -1,0 +1,165 @@
+name: Deploy FinOps Infrastructure
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - "terraform/platform/finops/**"
+      - "terraform/modules/cloud-run/**"
+      - ".github/workflows/finops-terraform.yml"
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: finops-terraform
+  cancel-in-progress: false
+
+env:
+  TF_WORKING_DIR: terraform/platform/finops
+  TF_IN_AUTOMATION: true
+  GOOGLE_PROJECT_ID: imposing-fx-413205
+
+jobs:
+  plan:
+    name: Plan FinOps Infrastructure
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4.2.2
+
+      - name: Authenticate to Google Cloud via OIDC
+        uses: google-github-actions/auth@v2.1.8
+        with:
+          workload_identity_provider: projects/915035381641/locations/global/workloadIdentityPools/github-pool/providers/github-provider
+          service_account: paved-road-sa@imposing-fx-413205.iam.gserviceaccount.com
+
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@v3
+
+      - name: Terraform format check
+        run: terraform -chdir="${TF_WORKING_DIR}" fmt -check
+
+      - name: Terraform init
+        run: terraform -chdir="${TF_WORKING_DIR}" init -reconfigure
+
+      - name: Select default workspace
+        run: terraform -chdir="${TF_WORKING_DIR}" workspace select default
+
+      - name: Terraform validate
+        run: terraform -chdir="${TF_WORKING_DIR}" validate
+
+      - name: Generate saved plan
+        run: |
+          terraform -chdir="${TF_WORKING_DIR}" plan \
+            -input=false \
+            -lock-timeout=5m \
+            -out=tfplan
+
+      - name: Generate plan checksum
+        shell: bash
+        working-directory: ${{ env.TF_WORKING_DIR }}
+        run: |
+          set -euo pipefail
+          sha256sum tfplan > tfplan.sha256
+          cat tfplan.sha256
+
+      - name: Upload reviewed plan
+        uses: actions/upload-artifact@v4.6.2
+        with:
+          name: finops-terraform-plan
+          path: |
+            ${{ env.TF_WORKING_DIR }}/tfplan
+            ${{ env.TF_WORKING_DIR }}/tfplan.sha256
+          if-no-files-found: error
+          retention-days: 1
+
+  apply:
+    name: Apply FinOps Infrastructure
+    needs: plan
+    runs-on: ubuntu-latest
+    environment: dev
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4.2.2
+
+      - name: Authenticate to Google Cloud via OIDC
+        uses: google-github-actions/auth@v2.1.8
+        with:
+          workload_identity_provider: projects/915035381641/locations/global/workloadIdentityPools/github-pool/providers/github-provider
+          service_account: paved-road-sa@imposing-fx-413205.iam.gserviceaccount.com
+
+      - name: Set up Google Cloud CLI
+        uses: google-github-actions/setup-gcloud@v2
+        with:
+          project_id: ${{ env.GOOGLE_PROJECT_ID }}
+
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@v3
+
+      - name: Terraform init
+        run: terraform -chdir="${TF_WORKING_DIR}" init -reconfigure
+
+      - name: Select default workspace
+        run: terraform -chdir="${TF_WORKING_DIR}" workspace select default
+
+      - name: Download reviewed plan
+        uses: actions/download-artifact@v4.3.0
+        with:
+          name: finops-terraform-plan
+          path: ${{ env.TF_WORKING_DIR }}
+
+      - name: Verify plan checksum
+        shell: bash
+        working-directory: ${{ env.TF_WORKING_DIR }}
+        run: |
+          set -euo pipefail
+          sha256sum --check tfplan.sha256
+
+      - name: Apply exact reviewed plan
+        run: |
+          terraform -chdir="${TF_WORKING_DIR}" apply \
+            -input=false \
+            -auto-approve \
+            tfplan
+
+      - name: Verify Terraform convergence
+        run: |
+          terraform -chdir="${TF_WORKING_DIR}" plan \
+            -input=false \
+            -lock-timeout=5m \
+            -detailed-exitcode
+
+      - name: Verify Pub/Sub push configuration
+        run: |
+          gcloud pubsub subscriptions describe \
+            paved-road-billing-budget-notifications-subscription \
+            --project="${GOOGLE_PROJECT_ID}" \
+            --format='yaml(
+              name,
+              pushConfig.pushEndpoint,
+              pushConfig.oidcToken.serviceAccountEmail,
+              pushConfig.oidcToken.audience,
+              enableExactlyOnceDelivery,
+              deadLetterPolicy,
+              retryPolicy
+            )'
+
+      - name: Verify Cloud Run readiness
+        run: |
+          gcloud run services describe finops-budget-consumer \
+            --project="${GOOGLE_PROJECT_ID}" \
+            --region=us-central1 \
+            --format='yaml(
+              metadata.name,
+              spec.template.spec.serviceAccountName,
+              status.url,
+              status.latestCreatedRevisionName,
+              status.latestReadyRevisionName,
+              status.conditions
+            )'
