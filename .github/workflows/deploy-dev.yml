@@ -23,6 +23,7 @@ jobs:
     env:
       TF_WORKING_DIR: terraform/environments/dev/cloud-run
       TF_IN_AUTOMATION: true
+      RELEASE_METADATA_TYPE: https://paved-road-platform.dev/attestations/release-metadata/v1
       DEV_DEPLOYMENT_EVIDENCE_TYPE: https://paved-road-platform.dev/attestations/dev-deployment/v1
       COSIGN_REPOSITORY: >-
         us-central1-docker.pkg.dev/imposing-fx-413205/paved-road-trust/paved-road-platform
@@ -84,31 +85,167 @@ jobs:
             exit 1
           fi
 
-          echo "digest_uri=${IMAGE_DIGEST_URI}" >> "${GITHUB_OUTPUT}"
+          IMAGE_DIGEST="${IMAGE_DIGEST_URI##*@}"
+
+          APP_VERSION="$(
+            awk -F'"' \
+              '/^[[:space:]]*APP_VERSION[[:space:]]*=/{print $2}' \
+              "${TFVARS_FILE}"
+          )"
+
+          COMMIT_SHA="$(
+            awk -F'"' \
+              '/^[[:space:]]*COMMIT_SHA[[:space:]]*=/{print $2}' \
+              "${TFVARS_FILE}"
+          )"
+
+          if [[ ! "${APP_VERSION}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Terraform APP_VERSION must be a semantic release tag."
+            exit 1
+          fi
+
+          if [[ ! "${COMMIT_SHA}" =~ ^[a-f0-9]{40}$ ]]; then
+            echo "Terraform COMMIT_SHA must be a full 40-character commit."
+            exit 1
+          fi
+
+          {
+            echo "digest_uri=${IMAGE_DIGEST_URI}"
+            echo "digest=${IMAGE_DIGEST}"
+            echo "release_tag=${APP_VERSION}"
+            echo "commit_sha=${COMMIT_SHA}"
+          } >> "${GITHUB_OUTPUT}"
 
       - name: Install Cosign
         uses: sigstore/cosign-installer@v3
 
-      - name: Verify image signature and SBOM attestation
+      - name: Verify signature, attestations, release metadata, and Cloud Build provenance
+        shell: bash
         env:
           IMAGE_DIGEST_URI: ${{ steps.image.outputs.digest_uri }}
-          CERTIFICATE_IDENTITY: https://github.com/Marcel2tight/paved-road-platform/.github/workflows/build-paved-road-image.yml@refs/heads/main
-        shell: bash
+          EXPECTED_DIGEST: ${{ steps.image.outputs.digest }}
+          EXPECTED_RELEASE_TAG: ${{ steps.image.outputs.release_tag }}
+          EXPECTED_COMMIT_SHA: ${{ steps.image.outputs.commit_sha }}
+          BUILD_SOURCE_PROJECT_ID: imposing-fx-413205
+          TRUSTED_BUILD_IDENTITY: ${{ github.server_url }}/${{ github.repository }}/.github/workflows/build-paved-road-image.yml@refs/heads/main
         run: |
           set -euo pipefail
 
+          COMMON_ARGS=(
+            --certificate-identity "${TRUSTED_BUILD_IDENTITY}"
+            --certificate-oidc-issuer "https://token.actions.githubusercontent.com"
+          )
+
           timeout 5m cosign verify \
             "${IMAGE_DIGEST_URI}" \
-            --certificate-identity "${CERTIFICATE_IDENTITY}" \
-            --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+            "${COMMON_ARGS[@]}" \
             >/dev/null
 
           timeout 5m cosign verify-attestation \
             "${IMAGE_DIGEST_URI}" \
             --type spdxjson \
-            --certificate-identity "${CERTIFICATE_IDENTITY}" \
-            --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+            "${COMMON_ARGS[@]}" \
             >/dev/null
+
+          PROVENANCE_FILE="${RUNNER_TEMP}/source-provenance.json"
+          ATTESTATION_FILE="${RUNNER_TEMP}/verified-release-metadata.json"
+
+          gcloud artifacts docker images describe \
+            "${IMAGE_DIGEST_URI}" \
+            --project="${BUILD_SOURCE_PROJECT_ID}" \
+            --show-provenance \
+            --format=json \
+            > "${PROVENANCE_FILE}"
+
+          timeout 5m cosign verify-attestation \
+            "${IMAGE_DIGEST_URI}" \
+            --type "${RELEASE_METADATA_TYPE}" \
+            "${COMMON_ARGS[@]}" \
+            > "${ATTESTATION_FILE}"
+
+          PREDICATE="$(
+            jq -er '
+              .payload
+              | @base64d
+              | fromjson
+              | .predicate
+            ' "${ATTESTATION_FILE}"
+          )"
+
+          SOURCE_URI="$(jq -er '.cloud_build_source_uri' <<<"${PREDICATE}")"
+          METADATA_REPOSITORY="$(jq -er '.repository' <<<"${PREDICATE}")"
+          METADATA_REF="$(jq -er '.git_ref' <<<"${PREDICATE}")"
+          METADATA_COMMIT="$(jq -er '.git_commit' <<<"${PREDICATE}")"
+          METADATA_TAG="$(jq -er '.release_tag' <<<"${PREDICATE}")"
+          METADATA_DIGEST="$(jq -er '.image_digest' <<<"${PREDICATE}")"
+
+          [ "${METADATA_REPOSITORY}" = "${GITHUB_REPOSITORY}" ] || {
+            echo "::error::Release metadata repository mismatch."
+            exit 1
+          }
+
+          [ "${METADATA_REF}" = "refs/heads/main" ] || {
+            echo "::error::Release metadata is not bound to main."
+            exit 1
+          }
+
+          [ "${METADATA_COMMIT}" = "${EXPECTED_COMMIT_SHA}" ] || {
+            echo "::error::Release metadata commit mismatch."
+            exit 1
+          }
+
+          [ "${METADATA_TAG}" = "${EXPECTED_RELEASE_TAG}" ] || {
+            echo "::error::Release metadata tag mismatch."
+            exit 1
+          }
+
+          [ "${METADATA_DIGEST}" = "${EXPECTED_DIGEST}" ] || {
+            echo "::error::Release metadata digest mismatch."
+            exit 1
+          }
+
+          case "${SOURCE_URI}" in
+            "gs://${BUILD_SOURCE_PROJECT_ID}_cloudbuild/source/"*) ;;
+            *)
+              echo "::error::Signed source URI is outside the trusted Cloud Build bucket."
+              exit 1
+              ;;
+          esac
+
+          EXPECTED_DIGEST_HEX="${EXPECTED_DIGEST#sha256:}"
+          EXPECTED_BUILDER="https://cloudbuild.googleapis.com/GoogleHostedWorker"
+          EXPECTED_BUILD_TYPE="https://cloud.google.com/build/gcb-buildtypes/google-worker/v1"
+          EXPECTED_PREDICATE_TYPE="https://slsa.dev/provenance/v1"
+
+          jq -e \
+            --arg digest "${EXPECTED_DIGEST_HEX}" \
+            --arg builder "${EXPECTED_BUILDER}" \
+            --arg build_type "${EXPECTED_BUILD_TYPE}" \
+            --arg predicate_type "${EXPECTED_PREDICATE_TYPE}" \
+            --arg source_uri "${SOURCE_URI}" '
+              [
+                .provenance_summary.provenance[]?
+                | .build.inTotoSlsaProvenanceV1?
+                | select(. != null)
+                | select(.predicateType == $predicate_type)
+                | select(.predicate.runDetails.builder.id == $builder)
+                | select(.predicate.buildDefinition.buildType == $build_type)
+                | select(any(.subject[]?; .digest.sha256 == $digest))
+                | select(
+                    any(
+                      .predicate.buildDefinition.resolvedDependencies[]?;
+                      .uri == $source_uri
+                      or (.uri | startswith($source_uri + "#"))
+                    )
+                  )
+              ]
+              | length > 0
+            ' "${PROVENANCE_FILE}" >/dev/null || {
+              echo "::error::Cloud Build provenance verification failed."
+              exit 1
+            }
+
+          echo "Signature, SBOM, release metadata, and Cloud Build provenance verification passed."
 
       - name: Terraform apply
         run: terraform -chdir=${TF_WORKING_DIR} apply -input=false -auto-approve
