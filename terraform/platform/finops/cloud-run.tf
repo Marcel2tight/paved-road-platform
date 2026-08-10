@@ -42,6 +42,7 @@ module "finops_budget_consumer" {
 
   depends_on = [
     google_project_service.finops["run.googleapis.com"],
+    google_service_account_iam_member.terraform_deployer_budget_consumer_user,
     google_secret_manager_secret_iam_member.finops_budget_consumer_secret_accessor,
   ]
 }
