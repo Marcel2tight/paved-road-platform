@@ -23,6 +23,7 @@ jobs:
     env:
       TF_WORKING_DIR: terraform/environments/dev/cloud-run
       TF_IN_AUTOMATION: true
+      DEPLOY_SERVICE_ACCOUNT: paved-road-sa@imposing-fx-413205.iam.gserviceaccount.com
       RELEASE_METADATA_TYPE: https://paved-road-platform.dev/attestations/release-metadata/v1
       DEV_DEPLOYMENT_EVIDENCE_TYPE: https://paved-road-platform.dev/attestations/dev-deployment/v1
       COSIGN_REPOSITORY: >-
@@ -35,7 +36,7 @@ jobs:
         uses: google-github-actions/auth@v2
         with:
           workload_identity_provider: projects/915035381641/locations/global/workloadIdentityPools/github-pool/providers/github-provider
-          service_account: paved-road-sa@imposing-fx-413205.iam.gserviceaccount.com
+          service_account: ${{ env.DEPLOY_SERVICE_ACCOUNT }}
 
       - name: Set up Google Cloud CLI
         uses: google-github-actions/setup-gcloud@v2
@@ -354,6 +355,7 @@ jobs:
 
           ID_TOKEN="$(
             gcloud auth print-identity-token \
+              --impersonate-service-account="${DEPLOY_SERVICE_ACCOUNT}" \
               --audiences="${SERVICE_URL}"
           )"
 
