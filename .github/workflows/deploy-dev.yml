@@ -23,6 +23,9 @@ jobs:
     env:
       TF_WORKING_DIR: terraform/environments/dev/cloud-run
       TF_IN_AUTOMATION: true
+      DEV_DEPLOYMENT_EVIDENCE_TYPE: https://paved-road-platform.dev/attestations/dev-deployment/v1
+      COSIGN_REPOSITORY: >-
+        us-central1-docker.pkg.dev/imposing-fx-413205/paved-road-trust/paved-road-platform
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -110,12 +113,180 @@ jobs:
       - name: Terraform apply
         run: terraform -chdir=${TF_WORKING_DIR} apply -input=false -auto-approve
 
-      - name: Verify Cloud Run deployment
+      - name: Validate deployed Dev revision and immutable digest
+        id: dev_deployment
+        shell: bash
+        env:
+          EXPECTED_IMAGE: ${{ steps.image.outputs.digest_uri }}
+          PROJECT_ID: imposing-fx-413205
+          REGION: us-central1
+          SERVICE_NAME: backstage-acceptance-test
         run: |
-          gcloud run services list \
-            --platform=managed \
-            --region=us-central1 \
-            --project=imposing-fx-413205
+          set -euo pipefail
+
+          SERVICE_JSON="$(
+            gcloud run services describe "${SERVICE_NAME}" \
+              --project="${PROJECT_ID}" \
+              --region="${REGION}" \
+              --platform=managed \
+              --format=json
+          )"
+
+          READY="$(
+            jq -r '
+              [.status.conditions[]? | select(.type == "Ready")][0].status
+              // [.status.conditions[]? | select(.type == "Ready")][0].state
+              // "UNKNOWN"
+            ' <<< "${SERVICE_JSON}"
+          )"
+
+          LATEST_READY_REVISION="$(
+            jq -r '.status.latestReadyRevisionName // empty' \
+              <<< "${SERVICE_JSON}"
+          )"
+
+          LATEST_CREATED_REVISION="$(
+            jq -r '.status.latestCreatedRevisionName // empty' \
+              <<< "${SERVICE_JSON}"
+          )"
+
+          DEPLOYED_IMAGE="$(
+            jq -r '.spec.template.spec.containers[0].image // empty' \
+              <<< "${SERVICE_JSON}"
+          )"
+
+          SERVICE_URL="$(
+            jq -r '.status.url // empty' \
+              <<< "${SERVICE_JSON}"
+          )"
+
+          TRAFFIC_PERCENT="$(
+            jq -r \
+              --arg revision "${LATEST_READY_REVISION}" '
+                [
+                  .status.traffic[]?
+                  | select(
+                      .revisionName == $revision
+                      or .latestRevision == true
+                    )
+                  | .percent
+                ][0] // 0
+              ' <<< "${SERVICE_JSON}"
+          )"
+
+          if [[ "${READY}" != "True" && "${READY}" != "CONDITION_SUCCEEDED" ]]; then
+            echo "Dev Cloud Run service is not ready: ${READY}"
+            exit 1
+          fi
+
+          if [[ -z "${LATEST_READY_REVISION}" ||
+                "${LATEST_READY_REVISION}" != "${LATEST_CREATED_REVISION}" ]]; then
+            echo "Latest created revision is not the latest ready revision."
+            echo "Created: ${LATEST_CREATED_REVISION}"
+            echo "Ready:   ${LATEST_READY_REVISION}"
+            exit 1
+          fi
+
+          if [[ "${TRAFFIC_PERCENT}" != "100" ]]; then
+            echo "Latest Dev revision does not receive 100% of traffic."
+            echo "Observed traffic: ${TRAFFIC_PERCENT}%"
+            exit 1
+          fi
+
+          if [[ "${DEPLOYED_IMAGE}" != "${EXPECTED_IMAGE}" ]]; then
+            echo "Dev deployed image does not match the configured digest."
+            echo "Expected: ${EXPECTED_IMAGE}"
+            echo "Observed: ${DEPLOYED_IMAGE}"
+            exit 1
+          fi
+
+          if [[ -z "${SERVICE_URL}" ]]; then
+            echo "Cloud Run service URL was not returned."
+            exit 1
+          fi
+
+          echo "revision=${LATEST_READY_REVISION}" >> "${GITHUB_OUTPUT}"
+          echo "service_url=${SERVICE_URL}" >> "${GITHUB_OUTPUT}"
+
+      - name: Run authenticated Dev health check
+        shell: bash
+        env:
+          SERVICE_URL: ${{ steps.dev_deployment.outputs.service_url }}
+        run: |
+          set -euo pipefail
+
+          ID_TOKEN="$(
+            gcloud auth print-identity-token \
+              --audiences="${SERVICE_URL}"
+          )"
+
+          HTTP_STATUS="$(
+            curl \
+              --silent \
+              --show-error \
+              --location \
+              --output health-response.txt \
+              --write-out '%{http_code}' \
+              --connect-timeout 10 \
+              --max-time 30 \
+              --retry 3 \
+              --retry-delay 5 \
+              --retry-all-errors \
+              --header "Authorization: Bearer ${ID_TOKEN}" \
+              "${SERVICE_URL}/health"
+          )"
+
+          if [[ "${HTTP_STATUS}" != "200" ]]; then
+            echo "Dev health check failed with HTTP ${HTTP_STATUS}."
+            sed -n '1,40p' health-response.txt
+            exit 1
+          fi
+
+          echo "Authenticated Dev health check passed."
+
+      - name: Attest verified Dev deployment evidence
+        shell: bash
+        env:
+          IMAGE_DIGEST_URI: ${{ steps.image.outputs.digest_uri }}
+          DEV_REVISION: ${{ steps.dev_deployment.outputs.revision }}
+          SERVICE_URL: ${{ steps.dev_deployment.outputs.service_url }}
+        run: |
+          set -euo pipefail
+
+          IMAGE_DIGEST="${IMAGE_DIGEST_URI##*@}"
+
+          jq -n \
+            --arg repository "${GITHUB_REPOSITORY}" \
+            --arg workflow_ref "${GITHUB_WORKFLOW_REF}" \
+            --arg workflow_run_id "${GITHUB_RUN_ID}" \
+            --arg git_commit "${GITHUB_SHA}" \
+            --arg image_digest "${IMAGE_DIGEST}" \
+            --arg project_id "imposing-fx-413205" \
+            --arg region "us-central1" \
+            --arg service_name "backstage-acceptance-test" \
+            --arg revision "${DEV_REVISION}" \
+            --arg service_url "${SERVICE_URL}" \
+            '{
+              repository: $repository,
+              workflow_ref: $workflow_ref,
+              workflow_run_id: $workflow_run_id,
+              git_commit: $git_commit,
+              image_digest: $image_digest,
+              environment: "dev",
+              project_id: $project_id,
+              region: $region,
+              service_name: $service_name,
+              revision: $revision,
+              traffic_percent: 100,
+              health_endpoint: ($service_url + "/health"),
+              health_status: 200
+            }' > dev-deployment-evidence.json
+
+          cosign attest \
+            --yes \
+            --predicate dev-deployment-evidence.json \
+            --type "${DEV_DEPLOYMENT_EVIDENCE_TYPE}" \
+            "${IMAGE_DIGEST_URI}"
 
       - name: Notify Slack (Dev Deploy Success)
         if: success()
