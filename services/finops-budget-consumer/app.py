@@ -153,12 +153,6 @@ def decode_budget_event(envelope: Any) -> BudgetEvent:
     if not isinstance(attributes, dict):
         raise InvalidEvent("Pub/Sub message attributes must be an object.")
 
-    schema_version = attributes.get("schemaVersion")
-    if schema_version != "1.0":
-        raise InvalidEvent(
-            f"Unsupported Cloud Billing schema version: {schema_version!r}."
-        )
-
     try:
         decoded = base64.b64decode(encoded_data, validate=True)
         payload = json.loads(decoded.decode("utf-8"))
@@ -167,6 +161,17 @@ def decode_budget_event(envelope: Any) -> BudgetEvent:
 
     if not isinstance(payload, dict):
         raise InvalidEvent("Decoded budget event must be a JSON object.")
+
+    schema_version = payload.get("schemaVersion")
+    # Preserve compatibility with notifications that provide metadata
+    # through Pub/Sub attributes.
+    if schema_version is None:
+        schema_version = attributes.get("schemaVersion")
+
+    if schema_version != "1.0":
+        raise InvalidEvent(
+            f"Unsupported Cloud Billing schema version: {schema_version!r}."
+        )
 
     required_fields = (
         "budgetDisplayName",

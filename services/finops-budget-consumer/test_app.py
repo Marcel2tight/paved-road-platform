@@ -140,6 +140,7 @@ def make_envelope(
     budget_id="test-budget-id",
     billing_account_id="000000-000000-000000",
     message_id="test-message-001",
+    schema_in_attributes=False,
 ):
     payload = {
         "budgetDisplayName": "Paved Road Platform Budget",
@@ -148,6 +149,9 @@ def make_envelope(
         "currencyCode": "USD",
         "costIntervalStart": "2026-08-01T00:00:00Z",
     }
+    if schema_version is not None and not schema_in_attributes:
+        payload["schemaVersion"] = schema_version
+
     if threshold is not None:
         payload["alertThresholdExceeded"] = threshold
 
@@ -155,16 +159,19 @@ def make_envelope(
         json.dumps(payload).encode("utf-8")
     ).decode("utf-8")
 
+    attributes = {
+        "billingAccountId": billing_account_id,
+        "budgetId": budget_id,
+    }
+    if schema_version is not None and schema_in_attributes:
+        attributes["schemaVersion"] = schema_version
+
     return {
         "subscription": "projects/test-project/subscriptions/test-subscription",
         "message": {
             "data": encoded_data,
             "messageId": message_id,
-            "attributes": {
-                "billingAccountId": billing_account_id,
-                "budgetId": budget_id,
-                "schemaVersion": schema_version,
-            },
+            "attributes": attributes,
         },
     }
 
@@ -198,6 +205,61 @@ def test_decode_budget_event():
     assert event.currency_code == "USD"
     assert event.alert_threshold_exceeded == 0.8
     assert round(event.spend_ratio, 2) == 0.85
+
+
+def test_accepts_schema_version_in_decoded_payload():
+    envelope = make_envelope(schema_version="1.0")
+
+    event = consumer.decode_budget_event(envelope)
+
+    assert event.schema_version == "1.0"
+
+
+def test_accepts_schema_version_in_attributes_for_compatibility():
+    envelope = make_envelope(
+        schema_version="1.0",
+        schema_in_attributes=True,
+    )
+
+    event = consumer.decode_budget_event(envelope)
+
+    assert event.schema_version == "1.0"
+
+
+def test_payload_schema_version_takes_precedence():
+    envelope = make_envelope(
+        schema_version="1.0",
+        schema_in_attributes=True,
+    )
+
+    decoded = json.loads(
+        base64.b64decode(
+            envelope["message"]["data"]
+        ).decode("utf-8")
+    )
+    decoded["schemaVersion"] = "2.0"
+    envelope["message"]["data"] = base64.b64encode(
+        json.dumps(decoded).encode("utf-8")
+    ).decode("utf-8")
+
+    with pytest.raises(
+        consumer.InvalidEvent,
+        match="Unsupported Cloud Billing schema version",
+    ):
+        consumer.decode_budget_event(envelope)
+
+
+def test_rejects_missing_schema_version(client):
+    response = client.post(
+        "/",
+        json=make_envelope(schema_version=None),
+    )
+
+    assert response.status_code == 400
+    assert (
+        "Unsupported Cloud Billing schema version: None"
+        in response.get_json()["error"]
+    )
 
 
 def test_rejects_unsupported_schema(client):
