@@ -31,6 +31,7 @@ concurrency:
 
 env:
   RELEASE_METADATA_TYPE: https://paved-road-platform.dev/attestations/release-metadata/v1
+  DEV_DEPLOYMENT_EVIDENCE_TYPE: https://paved-road-platform.dev/attestations/dev-deployment/v1
   COSIGN_REPOSITORY: >-
     us-central1-docker.pkg.dev/imposing-fx-413205/paved-road-trust/paved-road-platform
 
@@ -384,6 +385,153 @@ jobs:
             }
 
           echo "Signature, attestations, and Cloud Build provenance verification passed."
+
+      - name: Require verified Dev deployment evidence for Stage
+        if: inputs.target_environment == 'stage'
+        shell: bash
+        env:
+          BUILD_DIGEST_URI: ${{ steps.image.outputs.build_digest_uri }}
+          EXPECTED_DIGEST: ${{ steps.image.outputs.digest }}
+          TRUSTED_DEV_IDENTITY: ${{ github.server_url }}/${{ github.repository }}/.github/workflows/deploy-dev.yml@refs/heads/main
+          EXPECTED_DEV_WORKFLOW_REF: ${{ github.repository }}/.github/workflows/deploy-dev.yml@refs/heads/main
+          EXPECTED_DEV_PROJECT_ID: imposing-fx-413205
+          EXPECTED_DEV_REGION: us-central1
+          EXPECTED_DEV_SERVICE: backstage-acceptance-test
+        run: |
+          set -euo pipefail
+
+          ATTESTATION_FILE="${RUNNER_TEMP}/verified-dev-deployment-evidence.json"
+
+          timeout 5m cosign verify-attestation \
+            "${BUILD_DIGEST_URI}" \
+            --type "${DEV_DEPLOYMENT_EVIDENCE_TYPE}" \
+            --certificate-identity "${TRUSTED_DEV_IDENTITY}" \
+            --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+            > "${ATTESTATION_FILE}"
+
+          PREDICATE="$(
+            jq -er '
+              if type == "array" then .[0] else . end
+              | .payload
+              | @base64d
+              | fromjson
+              | .predicate
+            ' "${ATTESTATION_FILE}"
+          )"
+
+          EVIDENCE_REPOSITORY="$(
+            jq -er '.repository' <<< "${PREDICATE}"
+          )"
+          EVIDENCE_WORKFLOW_REF="$(
+            jq -er '.workflow_ref' <<< "${PREDICATE}"
+          )"
+          EVIDENCE_RUN_ID="$(
+            jq -er '.workflow_run_id' <<< "${PREDICATE}"
+          )"
+          EVIDENCE_COMMIT="$(
+            jq -er '.git_commit' <<< "${PREDICATE}"
+          )"
+          EVIDENCE_DIGEST="$(
+            jq -er '.image_digest' <<< "${PREDICATE}"
+          )"
+          EVIDENCE_ENVIRONMENT="$(
+            jq -er '.environment' <<< "${PREDICATE}"
+          )"
+          EVIDENCE_PROJECT_ID="$(
+            jq -er '.project_id' <<< "${PREDICATE}"
+          )"
+          EVIDENCE_REGION="$(
+            jq -er '.region' <<< "${PREDICATE}"
+          )"
+          EVIDENCE_SERVICE="$(
+            jq -er '.service_name' <<< "${PREDICATE}"
+          )"
+          EVIDENCE_REVISION="$(
+            jq -er '.revision' <<< "${PREDICATE}"
+          )"
+          EVIDENCE_TRAFFIC="$(
+            jq -er '.traffic_percent' <<< "${PREDICATE}"
+          )"
+          EVIDENCE_HEALTH_ENDPOINT="$(
+            jq -er '.health_endpoint' <<< "${PREDICATE}"
+          )"
+          EVIDENCE_HEALTH_STATUS="$(
+            jq -er '.health_status' <<< "${PREDICATE}"
+          )"
+
+          [ "${EVIDENCE_REPOSITORY}" = "${GITHUB_REPOSITORY}" ] || {
+            echo "::error::Dev evidence repository mismatch."
+            exit 1
+          }
+
+          [ "${EVIDENCE_WORKFLOW_REF}" = "${EXPECTED_DEV_WORKFLOW_REF}" ] || {
+            echo "::error::Dev evidence was not produced by deploy-dev.yml on main."
+            exit 1
+          }
+
+          [[ "${EVIDENCE_RUN_ID}" =~ ^[0-9]+$ ]] || {
+            echo "::error::Dev evidence workflow run ID is invalid."
+            exit 1
+          }
+
+          [[ "${EVIDENCE_COMMIT}" =~ ^[a-f0-9]{40}$ ]] || {
+            echo "::error::Dev evidence commit is invalid."
+            exit 1
+          }
+
+          [ "${EVIDENCE_DIGEST}" = "${EXPECTED_DIGEST}" ] || {
+            echo "::error::Dev evidence digest mismatch."
+            echo "::error::Expected ${EXPECTED_DIGEST}; observed ${EVIDENCE_DIGEST}."
+            exit 1
+          }
+
+          [ "${EVIDENCE_ENVIRONMENT}" = "dev" ] || {
+            echo "::error::Deployment evidence is not for Dev."
+            exit 1
+          }
+
+          [ "${EVIDENCE_PROJECT_ID}" = "${EXPECTED_DEV_PROJECT_ID}" ] || {
+            echo "::error::Dev evidence project mismatch."
+            exit 1
+          }
+
+          [ "${EVIDENCE_REGION}" = "${EXPECTED_DEV_REGION}" ] || {
+            echo "::error::Dev evidence region mismatch."
+            exit 1
+          }
+
+          [ "${EVIDENCE_SERVICE}" = "${EXPECTED_DEV_SERVICE}" ] || {
+            echo "::error::Dev evidence service mismatch."
+            exit 1
+          }
+
+          [[ -n "${EVIDENCE_REVISION}" ]] || {
+            echo "::error::Dev evidence revision is empty."
+            exit 1
+          }
+
+          [ "${EVIDENCE_TRAFFIC}" = "100" ] || {
+            echo "::error::Dev revision was not validated with 100% traffic."
+            exit 1
+          }
+
+          [ "${EVIDENCE_HEALTH_STATUS}" = "200" ] || {
+            echo "::error::Dev authenticated health check did not return HTTP 200."
+            exit 1
+          }
+
+          case "${EVIDENCE_HEALTH_ENDPOINT}" in
+            https://*/health) ;;
+            *)
+              echo "::error::Dev evidence contains an invalid health endpoint."
+              exit 1
+              ;;
+          esac
+
+          echo "Verified Dev deployment evidence:"
+          echo "  Digest:   ${EVIDENCE_DIGEST}"
+          echo "  Revision: ${EVIDENCE_REVISION}"
+          echo "  Run ID:   ${EVIDENCE_RUN_ID}"
 
       - name: Enforce immutable Artifact Registry tags
         shell: bash
