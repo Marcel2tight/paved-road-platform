@@ -1,3 +1,5 @@
+import hashlib
+import json
 import os
 import uuid
 from dataclasses import dataclass
@@ -8,9 +10,9 @@ from typing import Any
 from google.cloud import firestore
 
 
-FIRESTORE_COLLECTION = os.getenv(
-    "FIRESTORE_COLLECTION",
-    "finops_budget_events",
+THRESHOLD_NOTIFICATIONS_COLLECTION = os.getenv(
+    "THRESHOLD_NOTIFICATIONS_COLLECTION",
+    "budget-threshold-notifications",
 )
 
 LEASE_DURATION_SECONDS = int(
@@ -18,27 +20,51 @@ LEASE_DURATION_SECONDS = int(
 )
 
 
-class ClaimStatus(str, Enum):
+class ThresholdClaimStatus(str, Enum):
     CLAIMED = "claimed"
     DELIVERED = "delivered"
     ACTIVE = "active"
 
 
 @dataclass(frozen=True)
-class EventClaim:
-    status: ClaimStatus
+class ThresholdClaim:
+    status: ThresholdClaimStatus
     token: str | None = None
 
 
-class EventStoreError(Exception):
-    """Raised when persistent event-state operations fail."""
+class ThresholdStoreError(Exception):
+    """Raised when persistent threshold-state operations fail."""
 
 
-class FirestoreEventStore:
+def build_threshold_key(
+    billing_account_id: str,
+    budget_id: str,
+    cost_interval_start: str,
+    threshold: float,
+) -> str:
+    identity = {
+        "billing_account_id": billing_account_id,
+        "budget_id": budget_id,
+        "cost_interval_start": cost_interval_start,
+        "threshold": threshold,
+    }
+
+    canonical_identity = json.dumps(
+        identity,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+
+    return hashlib.sha256(
+        canonical_identity.encode("utf-8")
+    ).hexdigest()
+
+
+class FirestoreThresholdStore:
     def __init__(
         self,
         client: firestore.Client | None = None,
-        collection_name: str = FIRESTORE_COLLECTION,
+        collection_name: str = THRESHOLD_NOTIFICATIONS_COLLECTION,
         lease_duration_seconds: int = LEASE_DURATION_SECONDS,
     ) -> None:
         self.client = client or firestore.Client()
@@ -49,10 +75,11 @@ class FirestoreEventStore:
 
     def claim(
         self,
-        message_id: str,
+        threshold_key: str,
         metadata: dict[str, Any],
-    ) -> EventClaim:
-        document = self.collection.document(message_id)
+        message_id: str,
+    ) -> ThresholdClaim:
+        document = self.collection.document(threshold_key)
         transaction = self.client.transaction()
         now = datetime.now(timezone.utc)
         claim_token = str(uuid.uuid4())
@@ -68,8 +95,8 @@ class FirestoreEventStore:
                 state = current_state.get("state")
 
                 if state == "delivered":
-                    return EventClaim(
-                        status=ClaimStatus.DELIVERED
+                    return ThresholdClaim(
+                        status=ThresholdClaimStatus.DELIVERED
                     )
 
                 lease_expires_at = current_state.get(
@@ -81,16 +108,17 @@ class FirestoreEventStore:
                     and lease_expires_at is not None
                     and lease_expires_at > now
                 ):
-                    return EventClaim(
-                        status=ClaimStatus.ACTIVE
+                    return ThresholdClaim(
+                        status=ThresholdClaimStatus.ACTIVE
                     )
 
             current_transaction.set(
                 document,
                 {
                     **metadata,
-                    "message_id": message_id,
+                    "threshold_key": threshold_key,
                     "state": "processing",
+                    "first_message_id": message_id,
                     "claim_token": claim_token,
                     "lease_expires_at": now + self.lease_duration,
                     "claimed_at": now,
@@ -98,24 +126,25 @@ class FirestoreEventStore:
                 },
             )
 
-            return EventClaim(
-                status=ClaimStatus.CLAIMED,
+            return ThresholdClaim(
+                status=ThresholdClaimStatus.CLAIMED,
                 token=claim_token,
             )
 
         try:
             return claim_in_transaction(transaction)
         except Exception as error:
-            raise EventStoreError(
-                "Failed to claim budget event."
+            raise ThresholdStoreError(
+                "Failed to claim threshold notification."
             ) from error
 
     def mark_delivered(
         self,
-        message_id: str,
+        threshold_key: str,
         claim_token: str,
+        message_id: str,
     ) -> bool:
-        document = self.collection.document(message_id)
+        document = self.collection.document(threshold_key)
         transaction = self.client.transaction()
         now = datetime.now(timezone.utc)
 
@@ -140,6 +169,7 @@ class FirestoreEventStore:
                 document,
                 {
                     "state": "delivered",
+                    "delivered_message_id": message_id,
                     "delivered_at": now,
                     "updated_at": now,
                     "claim_token": firestore.DELETE_FIELD,
@@ -152,64 +182,16 @@ class FirestoreEventStore:
         try:
             return deliver_in_transaction(transaction)
         except Exception as error:
-            raise EventStoreError(
-                "Failed to mark budget event as delivered."
-            ) from error
-
-    def mark_suppressed(
-        self,
-        message_id: str,
-        claim_token: str,
-        threshold_key: str,
-    ) -> bool:
-        document = self.collection.document(message_id)
-        transaction = self.client.transaction()
-        now = datetime.now(timezone.utc)
-
-        @firestore.transactional
-        def suppress_in_transaction(current_transaction):
-            snapshot = document.get(
-                transaction=current_transaction
-            )
-
-            if not snapshot.exists:
-                return False
-
-            current_state = snapshot.to_dict() or {}
-
-            if (
-                current_state.get("state") != "processing"
-                or current_state.get("claim_token") != claim_token
-            ):
-                return False
-
-            current_transaction.update(
-                document,
-                {
-                    "state": "threshold_suppressed",
-                    "threshold_key": threshold_key,
-                    "suppressed_at": now,
-                    "updated_at": now,
-                    "claim_token": firestore.DELETE_FIELD,
-                    "lease_expires_at": firestore.DELETE_FIELD,
-                },
-            )
-
-            return True
-
-        try:
-            return suppress_in_transaction(transaction)
-        except Exception as error:
-            raise EventStoreError(
-                "Failed to mark budget event as threshold suppressed."
+            raise ThresholdStoreError(
+                "Failed to mark threshold notification as delivered."
             ) from error
 
     def release(
         self,
-        message_id: str,
+        threshold_key: str,
         claim_token: str,
     ) -> bool:
-        document = self.collection.document(message_id)
+        document = self.collection.document(threshold_key)
         transaction = self.client.transaction()
         now = datetime.now(timezone.utc)
 
@@ -235,8 +217,8 @@ class FirestoreEventStore:
                 {
                     "state": "retryable_failure",
                     "updated_at": now,
-                    "lease_expires_at": now,
                     "claim_token": firestore.DELETE_FIELD,
+                    "lease_expires_at": now,
                 },
             )
 
@@ -245,6 +227,6 @@ class FirestoreEventStore:
         try:
             return release_in_transaction(transaction)
         except Exception as error:
-            raise EventStoreError(
-                "Failed to release budget-event claim."
+            raise ThresholdStoreError(
+                "Failed to release threshold-notification claim."
             ) from error

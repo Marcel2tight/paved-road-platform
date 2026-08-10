@@ -18,6 +18,12 @@ from event_store import (
     EventStoreError,
     FirestoreEventStore,
 )
+from threshold_store import (
+    FirestoreThresholdStore,
+    ThresholdClaimStatus,
+    ThresholdStoreError,
+    build_threshold_key,
+)
 
 
 class JsonFormatter(logging.Formatter):
@@ -37,6 +43,7 @@ class JsonFormatter(logging.Formatter):
             "threshold",
             "status_code",
             "duration_ms",
+            "threshold_key",
         ):
             if hasattr(record, field):
                 payload[field] = getattr(record, field)
@@ -91,6 +98,11 @@ PROCESSING_DURATION = Histogram(
 @lru_cache(maxsize=1)
 def get_event_store() -> FirestoreEventStore:
     return FirestoreEventStore()
+
+
+@lru_cache(maxsize=1)
+def get_threshold_store() -> FirestoreThresholdStore:
+    return FirestoreThresholdStore()
 
 
 @dataclass(frozen=True)
@@ -369,10 +381,7 @@ def consume_budget_event():
             },
         )
 
-        if claim.status in (
-            ClaimStatus.DELIVERED,
-            ClaimStatus.ACTIVE,
-        ):
+        if claim.status == ClaimStatus.DELIVERED:
             EVENTS_DUPLICATES.labels(
                 claim_status=claim.status.value,
             ).inc()
@@ -396,9 +405,131 @@ def consume_budget_event():
 
             return "", 204
 
+        if claim.status == ClaimStatus.ACTIVE:
+            EVENTS_DUPLICATES.labels(
+                claim_status=claim.status.value,
+            ).inc()
+
+            EVENTS_FAILURES.labels(
+                failure_type="event_claim_active",
+            ).inc()
+
+            logger.warning(
+                "Budget event is already being processed; retry requested",
+                extra={
+                    "message_id": event.message_id,
+                    "budget_id": event.budget_id,
+                    "budget_name": event.budget_display_name,
+                    "billing_account_id": event.billing_account_id,
+                    "threshold": event.alert_threshold_exceeded,
+                },
+            )
+
+            return jsonify(
+                {
+                    "error": "Budget event is currently processing.",
+                }
+            ), 503
+
         if not claim.token:
             raise EventStoreError(
                 "Claimed budget event has no claim token."
+            )
+
+        threshold_key = build_threshold_key(
+            billing_account_id=event.billing_account_id,
+            budget_id=event.budget_id,
+            cost_interval_start=event.cost_interval_start,
+            threshold=event.alert_threshold_exceeded,
+        )
+
+        threshold_metadata = {
+            "billing_account_id": event.billing_account_id,
+            "budget_id": event.budget_id,
+            "cost_interval_start": event.cost_interval_start,
+            "threshold": event.alert_threshold_exceeded,
+        }
+
+        threshold_store = get_threshold_store()
+        threshold_claim = threshold_store.claim(
+            threshold_key=threshold_key,
+            metadata=threshold_metadata,
+            message_id=event.message_id,
+        )
+
+        if threshold_claim.status == ThresholdClaimStatus.DELIVERED:
+            suppressed = event_store.mark_suppressed(
+                message_id=event.message_id,
+                claim_token=claim.token,
+                threshold_key=threshold_key,
+            )
+
+            if not suppressed:
+                raise EventStoreError(
+                    "Threshold notification was already delivered, but "
+                    "the budget event could not be marked as suppressed."
+                )
+
+            EVENTS_DUPLICATES.labels(
+                claim_status="threshold_delivered",
+            ).inc()
+
+            EVENTS_PROCESSED.labels(
+                result="threshold_suppressed",
+                severity=severity,
+            ).inc()
+
+            logger.info(
+                "Repeated budget threshold notification suppressed",
+                extra={
+                    "message_id": event.message_id,
+                    "budget_id": event.budget_id,
+                    "budget_name": event.budget_display_name,
+                    "billing_account_id": event.billing_account_id,
+                    "threshold": event.alert_threshold_exceeded,
+                    "threshold_key": threshold_key,
+                },
+            )
+
+            return "", 204
+
+        if threshold_claim.status == ThresholdClaimStatus.ACTIVE:
+            released = event_store.release(
+                event.message_id,
+                claim.token,
+            )
+
+            if not released:
+                raise EventStoreError(
+                    "Active threshold claim detected, but the budget-event "
+                    "claim could not be released."
+                )
+
+            EVENTS_FAILURES.labels(
+                failure_type="threshold_claim_active",
+            ).inc()
+
+            logger.warning(
+                "Threshold notification is being processed; retry requested",
+                extra={
+                    "message_id": event.message_id,
+                    "budget_id": event.budget_id,
+                    "budget_name": event.budget_display_name,
+                    "billing_account_id": event.billing_account_id,
+                    "threshold": event.alert_threshold_exceeded,
+                    "threshold_key": threshold_key,
+                },
+            )
+
+            return jsonify(
+                {
+                    "error": "Threshold notification is currently processing.",
+                }
+            ), 503
+
+        if not threshold_claim.token:
+            raise ThresholdStoreError(
+                "Claimed threshold notification has no claim token."
             )
 
         slack_payload = build_slack_message(event, severity)
@@ -407,12 +538,37 @@ def consume_budget_event():
             send_slack_alert(slack_payload)
         except SlackDeliveryError:
             try:
-                released = event_store.release(
+                threshold_released = threshold_store.release(
+                    threshold_key=threshold_key,
+                    claim_token=threshold_claim.token,
+                )
+
+                if not threshold_released:
+                    logger.warning(
+                        "Threshold-notification claim was not released",
+                        extra={
+                            "message_id": event.message_id,
+                            "budget_id": event.budget_id,
+                            "threshold": event.alert_threshold_exceeded,
+                        },
+                    )
+            except ThresholdStoreError:
+                logger.exception(
+                    "Failed to release threshold-notification claim",
+                    extra={
+                        "message_id": event.message_id,
+                        "budget_id": event.budget_id,
+                        "threshold": event.alert_threshold_exceeded,
+                    },
+                )
+
+            try:
+                event_released = event_store.release(
                     event.message_id,
                     claim.token,
                 )
 
-                if not released:
+                if not event_released:
                     logger.warning(
                         "Budget-event claim was not released",
                         extra={
@@ -430,6 +586,61 @@ def consume_budget_event():
                 )
 
             raise
+
+        try:
+            threshold_delivered = threshold_store.mark_delivered(
+                threshold_key=threshold_key,
+                claim_token=threshold_claim.token,
+                message_id=event.message_id,
+            )
+        except ThresholdStoreError:
+            try:
+                event_released = event_store.release(
+                    event.message_id,
+                    claim.token,
+                )
+
+                if not event_released:
+                    logger.warning(
+                        "Budget-event claim was not released after threshold "
+                        "finalization failed",
+                        extra={
+                            "message_id": event.message_id,
+                            "budget_id": event.budget_id,
+                            "threshold": event.alert_threshold_exceeded,
+                            "threshold_key": threshold_key,
+                        },
+                    )
+            except EventStoreError:
+                logger.exception(
+                    "Failed to release budget-event claim after threshold "
+                    "finalization failed",
+                    extra={
+                        "message_id": event.message_id,
+                        "budget_id": event.budget_id,
+                        "threshold": event.alert_threshold_exceeded,
+                        "threshold_key": threshold_key,
+                    },
+                )
+
+            raise
+
+        if not threshold_delivered:
+            event_released = event_store.release(
+                event.message_id,
+                claim.token,
+            )
+
+            if not event_released:
+                raise EventStoreError(
+                    "Threshold state could not be finalized and the budget-event "
+                    "claim could not be released."
+                )
+
+            raise ThresholdStoreError(
+                "Budget alert was delivered to Slack, but its semantic "
+                "threshold state could not be finalized."
+            )
 
         delivered = event_store.mark_delivered(
             event.message_id,
@@ -455,6 +666,7 @@ def consume_budget_event():
                 "budget_name": event.budget_display_name,
                 "billing_account_id": event.billing_account_id,
                 "threshold": event.alert_threshold_exceeded,
+                "threshold_key": threshold_key,
             },
         )
 
@@ -465,22 +677,14 @@ def consume_budget_event():
         logger.warning("Invalid budget event: %s", error)
         return jsonify({"error": str(error)}), 400
 
-    except SlackDeliveryError as error:
-        EVENTS_FAILURES.labels(failure_type="slack_delivery").inc()
-        logger.exception("Retryable Slack delivery failure: %s", error)
-        return jsonify({"error": "Alert delivery failed."}), 503
-
-    except EventStoreError as error:
-        EVENTS_FAILURES.labels(
-            failure_type="event_store"
-        ).inc()
-        logger.exception(
-            "Retryable persistent event-state failure: %s",
-            error,
-        )
-        return jsonify(
-            {"error": "Persistent event-state operation failed."}
-        ), 503
+    except (
+        SlackDeliveryError,
+        EventStoreError,
+        ThresholdStoreError,
+    ) as error:
+        EVENTS_FAILURES.labels(failure_type=type(error).__name__).inc()
+        logger.exception("Retryable processing failure: %s", error)
+        return jsonify({"error": str(error)}), 503
 
     except Exception:
         EVENTS_FAILURES.labels(failure_type="unexpected").inc()

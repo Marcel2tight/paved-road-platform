@@ -359,3 +359,46 @@ def test_wraps_release_failure():
             "message-001",
             "claim-token",
         )
+
+
+def test_marks_owned_event_claim_threshold_suppressed():
+    store, client = make_store(
+        {
+            "state": "processing",
+            "claim_token": "event-token",
+        }
+    )
+
+    result = store.mark_suppressed(
+        message_id="message-001",
+        claim_token="event-token",
+        threshold_key="threshold-key",
+    )
+
+    assert result is True
+
+    _, payload = client.transaction_instance.update_calls[0]
+
+    assert payload["state"] == "threshold_suppressed"
+    assert payload["threshold_key"] == "threshold-key"
+    assert "suppressed_at" in payload
+    assert payload["claim_token"] == firestore.DELETE_FIELD
+    assert payload["lease_expires_at"] == firestore.DELETE_FIELD
+
+
+def test_rejects_unowned_threshold_suppression():
+    store, client = make_store(
+        {
+            "state": "processing",
+            "claim_token": "different-token",
+        }
+    )
+
+    result = store.mark_suppressed(
+        message_id="message-001",
+        claim_token="event-token",
+        threshold_key="threshold-key",
+    )
+
+    assert result is False
+    assert client.transaction_instance.update_calls == []

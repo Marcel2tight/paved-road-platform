@@ -1,0 +1,338 @@
+name: Build and Sign FinOps Budget Consumer Image
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: "Semantic release tag, for example v1.0.1"
+        required: true
+        default: "v1.0.1"
+        type: string
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: finops-budget-consumer-image-${{ inputs.release_tag }}
+  cancel-in-progress: false
+
+jobs:
+  build-sign-attest:
+    name: Test, Build, Sign, and Attest
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    environment: dev
+    timeout-minutes: 45
+
+    env:
+      PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
+      REGION: ${{ vars.GCP_REGION }}
+      REPOSITORY: ${{ vars.IMAGE_REPOSITORY }}
+      IMAGE_NAME: finops-budget-consumer
+      IMAGE_REPOSITORY: >-
+        ${{ vars.GCP_REGION }}-docker.pkg.dev/${{ vars.GCP_PROJECT_ID }}/${{ vars.IMAGE_REPOSITORY }}/finops-budget-consumer
+      COSIGN_REPOSITORY: >-
+        ${{ vars.GCP_REGION }}-docker.pkg.dev/${{ vars.GCP_PROJECT_ID }}/paved-road-trust/finops-budget-consumer
+      RELEASE_TAG: ${{ inputs.release_tag }}
+      RELEASE_METADATA_TYPE: https://paved-road-platform.dev/attestations/release-metadata/v1
+
+    steps:
+      - name: Checkout immutable source revision
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Validate trusted release request
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "${GITHUB_REF}" != "refs/heads/main" ]; then
+            echo "::error::Release builds must run from refs/heads/main."
+            exit 1
+          fi
+          if [[ ! "${GITHUB_SHA}" =~ ^[a-f0-9]{40}$ ]]; then
+            echo "::error::Invalid Git commit SHA."
+            exit 1
+          fi
+          if [[ ! "${RELEASE_TAG}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::Release tag must use vMAJOR.MINOR.PATCH."
+            exit 1
+          fi
+
+      - name: Set up Python
+        uses: actions/setup-python@82c7e631bb3cdc910f68e0081d67478d79c6982d # v5.4.0
+        with:
+          python-version: "3.11"
+
+      - name: Install and test FinOps budget consumer
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pip install \
+            --disable-pip-version-check \
+            --no-cache-dir \
+            -r services/finops-budget-consumer/requirements.txt
+          python -m pip install \
+            --disable-pip-version-check \
+            --no-cache-dir \
+            pytest
+          python -m pip check
+          python -m pytest -q services/finops-budget-consumer
+
+      - name: Authenticate to Google Cloud using OIDC
+        uses: google-github-actions/auth@6fc4af4b145ae7821d527454aa9bd537d1f2dc5f # v2.1.7
+        with:
+          workload_identity_provider: ${{ vars.WIF_PROVIDER }}
+          service_account: ${{ vars.BUILD_SERVICE_ACCOUNT }}
+          project_id: ${{ vars.GCP_PROJECT_ID }}
+          create_credentials_file: true
+          export_environment_variables: true
+
+      - name: Set up Google Cloud CLI
+        uses: google-github-actions/setup-gcloud@6189d56e4096ee891640bb02ac264be376592d6a # v2.1.2
+        with:
+          project_id: ${{ vars.GCP_PROJECT_ID }}
+
+      - name: Configure Artifact Registry authentication
+        run: gcloud auth configure-docker "${REGION}-docker.pkg.dev" --quiet
+
+      - name: Require immutable repository tags
+        shell: bash
+        run: |
+          set -euo pipefail
+          IMMUTABLE="$(
+            gcloud artifacts repositories describe "${REPOSITORY}" \
+              --project="${PROJECT_ID}" --location="${REGION}" \
+              --format='value(dockerConfig.immutableTags)'
+          )"
+          if [ "${IMMUTABLE}" != "True" ] && [ "${IMMUTABLE}" != "true" ]; then
+            echo "::error::Artifact Registry immutable tags must be enabled."
+            exit 1
+          fi
+
+      - name: Ensure release tag does not exist
+        shell: bash
+        env:
+          IMAGE_TAG_URI: ${{ env.IMAGE_REPOSITORY }}:${{ env.RELEASE_TAG }}
+        run: |
+          set -euo pipefail
+          if gcloud artifacts docker images describe "${IMAGE_TAG_URI}" \
+            --project="${PROJECT_ID}" >/dev/null 2>&1; then
+            echo "::error::Release tag ${RELEASE_TAG} already exists."
+            exit 1
+          fi
+
+      - name: Diagnose Cloud Build access
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          echo "Active identity:"
+          gcloud auth list \
+            --filter=status:ACTIVE \
+            --format="value(account)"
+
+          echo "Configured project:"
+          gcloud config get-value project
+
+          echo "Bucket metadata:"
+          gcloud storage buckets describe \
+            gs://${{ env.PROJECT_ID }}_cloudbuild \
+            --format="yaml(name,location,projectNumber)"
+
+          echo "Bucket listing:"
+          gcloud storage ls \
+            gs://${{ env.PROJECT_ID }}_cloudbuild
+
+          echo "Direct upload test:"
+          printf 'Cloud Build staging permission test\n' > cloud-build-access-test.txt
+
+          gcloud storage cp \
+            cloud-build-access-test.txt \
+            gs://${{ env.PROJECT_ID }}_cloudbuild/source/cloud-build-access-test-${GITHUB_RUN_ID}.txt
+
+      - name: Build and push application image
+        id: build
+        shell: bash
+        env:
+          IMAGE_TAG_URI: ${{ env.IMAGE_REPOSITORY }}:${{ env.RELEASE_TAG }}
+        run: |
+          set -euo pipefail
+
+          BUILD_OUTPUT="${RUNNER_TEMP}/cloud-build.json"
+
+          gcloud builds submit services/finops-budget-consumer \
+            --tag "${IMAGE_TAG_URI}" \
+            --project="${PROJECT_ID}" \
+            --async \
+            --quiet \
+            --format=json > "${BUILD_OUTPUT}"
+
+          BUILD_ID="$(jq -er '.id' "${BUILD_OUTPUT}")"
+          echo "build_id=${BUILD_ID}" >> "${GITHUB_OUTPUT}"
+          echo "Cloud Build submitted: ${BUILD_ID}"
+
+          for attempt in {1..90}; do
+            BUILD_STATUS="$(
+              gcloud builds describe "${BUILD_ID}" \
+                --project="${PROJECT_ID}" \
+                --format='value(status)'
+            )"
+
+            echo "Cloud Build status: ${BUILD_STATUS}"
+
+            case "${BUILD_STATUS}" in
+              SUCCESS)
+                echo "Cloud Build completed successfully."
+                exit 0
+                ;;
+              FAILURE|INTERNAL_ERROR|TIMEOUT|CANCELLED|EXPIRED)
+                echo "::error::Cloud Build ${BUILD_ID} ended with status ${BUILD_STATUS}."
+                gcloud builds describe "${BUILD_ID}" \
+                  --project="${PROJECT_ID}" \
+                  --format='yaml(id,status,statusDetail,failureInfo,results.images)'
+                exit 1
+                ;;
+              QUEUED|WORKING|PENDING|"")
+                sleep 5
+                ;;
+              *)
+                echo "::warning::Unexpected Cloud Build status: ${BUILD_STATUS}"
+                sleep 5
+                ;;
+            esac
+          done
+
+          echo "::error::Timed out waiting for Cloud Build ${BUILD_ID}."
+          exit 1
+
+      - name: Resolve immutable digest and independent build source
+        id: image
+        shell: bash
+        env:
+          IMAGE_TAG_URI: ${{ env.IMAGE_REPOSITORY }}:${{ env.RELEASE_TAG }}
+          BUILD_ID: ${{ steps.build.outputs.build_id }}
+        run: |
+          set -euo pipefail
+          DIGEST="$(
+            gcloud builds describe "${BUILD_ID}" \
+              --project="${PROJECT_ID}" \
+              --format='value(results.images[0].digest)'
+          )"
+          if [[ ! "${DIGEST}" =~ ^sha256:[a-f0-9]{64}$ ]]; then
+            echo "::error::Unable to resolve an immutable image digest."
+            exit 1
+          fi
+          SOURCE_URI="$(
+            gcloud builds describe "${BUILD_ID}" \
+              --project="${PROJECT_ID}" --format=json |
+              jq -er '.source.storageSource
+                | "gs://" + .bucket + "/" + .object'
+          )"
+          case "${SOURCE_URI}" in
+            "gs://${PROJECT_ID}_cloudbuild/source/"*) ;;
+            *)
+              echo "::error::Unexpected Cloud Build source URI."
+              exit 1
+              ;;
+          esac
+          {
+            echo "digest=${DIGEST}"
+            echo "digest_uri=${IMAGE_REPOSITORY}@${DIGEST}"
+            echo "source_uri=${SOURCE_URI}"
+          } >> "${GITHUB_OUTPUT}"
+
+      - name: Install Syft
+        uses: anchore/sbom-action/download-syft@f8bdd1d8ac5e901a77a92f111440fdb1b593736b # v0.20.6
+
+      - name: Generate SPDX SBOM
+        run: syft "${{ steps.image.outputs.digest_uri }}" -o spdx-json=sbom.spdx.json
+
+      - name: Scan immutable image
+        uses: aquasecurity/trivy-action@76071ef0d7ec797419534a183b498b4d6366cf37 # v0.31.0
+        with:
+          image-ref: ${{ steps.image.outputs.digest_uri }}
+          format: table
+          exit-code: "1"
+          ignore-unfixed: true
+          vuln-type: "os,library"
+          severity: "CRITICAL,HIGH"
+          version: "v0.69.2"
+
+      - name: Upload human-readable SBOM
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: finops-budget-consumer-${{ inputs.release_tag }}-sbom
+          path: sbom.spdx.json
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Install Cosign
+        uses: sigstore/cosign-installer@3454372f43399081ed03b604cb2d021dabca52bb # v3.8.2
+
+      - name: Create independently bound release metadata
+        shell: bash
+        env:
+          IMAGE_DIGEST: ${{ steps.image.outputs.digest }}
+          CLOUD_BUILD_SOURCE_URI: ${{ steps.image.outputs.source_uri }}
+          CLOUD_BUILD_ID: ${{ steps.build.outputs.build_id }}
+        run: |
+          set -euo pipefail
+          jq -n \
+            --arg repository "${GITHUB_REPOSITORY}" \
+            --arg git_ref "${GITHUB_REF}" \
+            --arg git_commit "${GITHUB_SHA}" \
+            --arg release_tag "${RELEASE_TAG}" \
+            --arg image_digest "${IMAGE_DIGEST}" \
+            --arg source_uri "${CLOUD_BUILD_SOURCE_URI}" \
+            --arg build_id "${CLOUD_BUILD_ID}" \
+            '{
+              repository: $repository,
+              git_ref: $git_ref,
+              git_commit: $git_commit,
+              release_tag: $release_tag,
+              image_digest: $image_digest,
+              cloud_build_source_uri: $source_uri,
+              cloud_build_id: $build_id
+            }' > release-metadata.json
+
+      - name: Sign image and attach attestations
+        shell: bash
+        env:
+          IMAGE_DIGEST_URI: ${{ steps.image.outputs.digest_uri }}
+        run: |
+          set -euo pipefail
+          cosign sign --yes "${IMAGE_DIGEST_URI}"
+          cosign attest --yes --predicate sbom.spdx.json --type spdxjson "${IMAGE_DIGEST_URI}"
+          cosign attest --yes --predicate release-metadata.json \
+            --type "${RELEASE_METADATA_TYPE}" "${IMAGE_DIGEST_URI}"
+
+      - name: Verify all build claims
+        shell: bash
+        env:
+          IMAGE_DIGEST_URI: ${{ steps.image.outputs.digest_uri }}
+          CERTIFICATE_IDENTITY: ${{ github.server_url }}/${{ github.repository }}/.github/workflows/build-finops-budget-consumer-image.yml@refs/heads/main
+        run: |
+          set -euo pipefail
+          COMMON_ARGS=(
+            --certificate-identity "${CERTIFICATE_IDENTITY}"
+            --certificate-oidc-issuer "https://token.actions.githubusercontent.com"
+          )
+          timeout 5m cosign verify "${IMAGE_DIGEST_URI}" "${COMMON_ARGS[@]}" >/dev/null
+          timeout 5m cosign verify-attestation "${IMAGE_DIGEST_URI}" \
+            --type spdxjson "${COMMON_ARGS[@]}" >/dev/null
+          timeout 5m cosign verify-attestation "${IMAGE_DIGEST_URI}" \
+            --type "${RELEASE_METADATA_TYPE}" "${COMMON_ARGS[@]}" >/dev/null
+
+      - name: Publish release summary
+        shell: bash
+        run: |
+          {
+            echo "## FinOps budget consumer image release"
+            echo "- Tag: ${RELEASE_TAG}"
+            echo "- Commit: ${GITHUB_SHA}"
+            echo "- Immutable image: ${{ steps.image.outputs.digest_uri }}"
+            echo "- Signature, SPDX SBOM, and release metadata: verified"
+          } >> "${GITHUB_STEP_SUMMARY}"

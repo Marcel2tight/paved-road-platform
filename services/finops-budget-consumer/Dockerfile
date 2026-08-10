@@ -40,6 +40,7 @@ COPY --from=builder /opt/venv /opt/venv
 COPY --chown=appuser:appuser \
     app.py \
     event_store.py \
+    threshold_store.py \
     /app/
 
 USER appuser

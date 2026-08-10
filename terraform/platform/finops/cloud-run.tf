@@ -15,9 +15,10 @@ module "finops_budget_consumer" {
   allow_unauthenticated = false
 
   env_vars = {
-    SERVICE_NAME                 = "finops-budget-consumer"
-    FIRESTORE_COLLECTION         = "budget-events"
-    EVENT_LEASE_DURATION_SECONDS = "300"
+    SERVICE_NAME                       = "finops-budget-consumer"
+    FIRESTORE_COLLECTION               = "budget-events"
+    THRESHOLD_NOTIFICATIONS_COLLECTION = "budget-threshold-notifications"
+    EVENT_LEASE_DURATION_SECONDS       = "300"
   }
 
   secret_env_vars = {
