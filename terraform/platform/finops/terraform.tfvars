@@ -6,4 +6,4 @@ terraform_deployer_service_account_email = "paved-road-sa@imposing-fx-413205.iam
 budget_display_name            = "Paved Road Platform Budget"
 monthly_budget_amount          = 50
 budget_notification_topic_name = "paved-road-billing-budget-notifications"
-budget_consumer_image          = "us-central1-docker.pkg.dev/imposing-fx-413205/paved-road-containers/finops-budget-consumer@sha256:9280fc722ffa8b582d891ef4f89c4e5d5f5b688175534175f4dc5899e2ccab76"
+budget_consumer_image          = "us-central1-docker.pkg.dev/imposing-fx-413205/paved-road-containers/finops-budget-consumer@sha256:7e86f451bc0456998f8622390dd88d8f403de0fc7e068a4d080590d67a7e2af6"
