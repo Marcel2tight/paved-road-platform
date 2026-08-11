@@ -1,8 +1,13 @@
 build_project_id = "imposing-fx-413205"
 region           = "us-central1"
 build_repository = "paved-road-containers"
+trust_repository = "paved-road-trust"
 
 promotion_deployer_service_accounts = [
   "paved-road-deployer@paved-road-stage-413205.iam.gserviceaccount.com",
   "paved-road-deployer@paved-road-prod-413205.iam.gserviceaccount.com",
+]
+
+deployment_evidence_writer_service_accounts = [
+  "paved-road-sa@imposing-fx-413205.iam.gserviceaccount.com",
 ]

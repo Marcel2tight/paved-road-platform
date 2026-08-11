@@ -28,3 +28,29 @@ variable "promotion_deployer_service_accounts" {
     error_message = "Each promotion deployer must be a valid Google Cloud service-account email address."
   }
 }
+
+variable "trust_repository" {
+  description = "Artifact Registry repository containing Cosign signatures and attestations."
+  type        = string
+
+  validation {
+    condition     = length(trimspace(var.trust_repository)) > 0
+    error_message = "The trust repository name must not be empty."
+  }
+}
+
+variable "deployment_evidence_writer_service_accounts" {
+  description = "Deployer service accounts permitted to publish verified deployment evidence to the trust repository."
+  type        = set(string)
+
+  validation {
+    condition = (
+      length(var.deployment_evidence_writer_service_accounts) > 0 &&
+      alltrue([
+        for service_account in var.deployment_evidence_writer_service_accounts :
+        can(regex("^[^@[:space:]]+@[^@[:space:]]+\\.iam\\.gserviceaccount\\.com$", service_account))
+      ])
+    )
+    error_message = "Each deployment-evidence writer must be a valid Google Cloud service-account email address."
+  }
+}
