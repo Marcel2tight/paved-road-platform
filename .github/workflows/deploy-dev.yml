@@ -346,51 +346,63 @@ jobs:
           echo "revision=${LATEST_READY_REVISION}" >> "${GITHUB_OUTPUT}"
           echo "service_url=${SERVICE_URL}" >> "${GITHUB_OUTPUT}"
 
-      - name: Mint Dev health-check identity token
-        id: dev_health_auth
-        uses: google-github-actions/auth@v2
-        with:
-          workload_identity_provider: projects/915035381641/locations/global/workloadIdentityPools/github-pool/providers/github-provider
-          service_account: ${{ env.DEPLOY_SERVICE_ACCOUNT }}
-          token_format: id_token
-          id_token_audience: ${{ steps.dev_deployment.outputs.service_url }}
-
-      - name: Run authenticated Dev health check
+      - name: Run internal Dev health probe
         shell: bash
         env:
+          PROJECT_ID: imposing-fx-413205
+          REGION: us-central1
+          SCHEDULER_JOB: backstage-acceptance-test-health-probe
+          SERVICE_NAME: backstage-acceptance-test
+          DEV_REVISION: ${{ steps.dev_deployment.outputs.revision }}
           SERVICE_URL: ${{ steps.dev_deployment.outputs.service_url }}
-          ID_TOKEN: ${{ steps.dev_health_auth.outputs.id_token }}
         run: |
           set -euo pipefail
 
-          if [[ -z "${ID_TOKEN}" ]]; then
-            echo "Dev health-check identity token was not generated."
-            exit 1
-          fi
-
-          HTTP_STATUS="$(
-            curl \
-              --silent \
-              --show-error \
-              --location \
-              --output health-response.txt \
-              --write-out '%{http_code}' \
-              --connect-timeout 10 \
-              --max-time 30 \
-              --retry 3 \
-              --retry-delay 5 \
-              --retry-all-errors \
-              --header "Authorization: Bearer ${ID_TOKEN}" \
-              "${SERVICE_URL}/health"
+          PROBE_STARTED_AT="$(
+            date -u +'%Y-%m-%dT%H:%M:%SZ'
           )"
 
-          if [[ "${HTTP_STATUS}" != "200" ]]; then
-            echo "Dev health check failed with HTTP ${HTTP_STATUS}."
-            sed -n '1,40p' health-response.txt
+          gcloud scheduler jobs run "${SCHEDULER_JOB}" \
+            --project="${PROJECT_ID}" \
+            --location="${REGION}"
+
+          PROBE_VERIFIED=false
+
+          for attempt in {1..12}; do
+            HTTP_200_LOG="$(
+              gcloud logging read \
+                "resource.type=\"cloud_run_revision\"
+                AND resource.labels.service_name=\"${SERVICE_NAME}\"
+                AND resource.labels.revision_name=\"${DEV_REVISION}\"
+                AND httpRequest.requestMethod=\"GET\"
+                AND httpRequest.requestUrl=\"${SERVICE_URL}/health\"
+                AND httpRequest.status=200
+                AND timestamp>=\"${PROBE_STARTED_AT}\"" \
+                --project="${PROJECT_ID}" \
+                --limit=1 \
+                --format='value(timestamp)'
+            )"
+
+            if [[ -n "${HTTP_200_LOG}" ]]; then
+              echo "Internal Dev health probe returned HTTP 200 at ${HTTP_200_LOG}."
+              PROBE_VERIFIED=true
+              break
+            fi
+
+            echo "Waiting for internal health-probe evidence (${attempt}/12)..."
+            sleep 10
+          done
+
+          if [[ "${PROBE_VERIFIED}" != "true" ]]; then
+            echo "No HTTP 200 health-probe request was observed for revision ${DEV_REVISION}."
+
+            gcloud scheduler jobs describe "${SCHEDULER_JOB}" \
+              --project="${PROJECT_ID}" \
+              --location="${REGION}" \
+              --format='yaml(state,status,lastAttemptTime)'
+
             exit 1
           fi
-
-          echo "Authenticated Dev health check passed."
 
       - name: Attest verified Dev deployment evidence
         shell: bash
