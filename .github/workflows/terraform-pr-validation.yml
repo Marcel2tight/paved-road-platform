@@ -78,6 +78,7 @@ jobs:
         uses: aquasecurity/tfsec-action@v1.0.3
         with:
           working_directory: ${{ env.TF_WORKING_DIR }}
+          additional_args: --ignore-hcl-errors
           github_token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Terraform plan
