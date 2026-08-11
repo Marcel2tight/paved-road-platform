@@ -20,3 +20,13 @@ resource "google_project_iam_member" "provenance_viewer" {
   role    = "roles/containeranalysis.occurrences.viewer"
   member  = "serviceAccount:${each.value}"
 }
+
+resource "google_artifact_registry_repository_iam_member" "deployment_evidence_writer" {
+  for_each = var.deployment_evidence_writer_service_accounts
+
+  project    = var.build_project_id
+  location   = var.region
+  repository = var.trust_repository
+  role       = "roles/artifactregistry.writer"
+  member     = "serviceAccount:${each.value}"
+}
