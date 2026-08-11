@@ -39,11 +39,6 @@ resource "google_service_account" "synthetic_probe" {
   description  = "OIDC identity used by Cloud Scheduler to probe the Dev Cloud Run service."
 }
 
-import {
-  to = google_service_account.synthetic_probe
-  id = "projects/imposing-fx-413205/serviceAccounts/paved-road-dev-probe@imposing-fx-413205.iam.gserviceaccount.com"
-}
-
 resource "google_service_account_iam_member" "synthetic_probe_deployer_user" {
   service_account_id = google_service_account.synthetic_probe.name
   role               = "roles/iam.serviceAccountUser"
