@@ -241,7 +241,7 @@ The platform has reached its **FinOps automation milestone**. The core IDP pathâ
 
 ## Screenshots
 
-The following screenshots provide visual evidence of the platform's completed capabilities. Store screenshot files under `docs/images/` and reference them using repository-relative paths.
+The screenshots below provide visual evidence of completed platform capabilities across developer experience, CI/CD, cloud runtime, observability, reliability engineering, software supply-chain security, immutable promotion, and FinOps automation.
 
 | Capability | Screenshot |
 | --- | --- |
@@ -259,7 +259,7 @@ The following screenshots provide visual evidence of the platform's completed ca
 | FinOps Secure Release Workflow | ![FinOps Secure Release Workflow](docs/images/finops-release-workflow.png) |
 | Platform Architecture | ![Platform Architecture](docs/images/platform-architecture.png) |
 
-> Screenshots are added as their corresponding implementation checkpoints are documented. A missing image does not affect the platform implementation, but all published image paths should resolve before the README is finalized.
+> Visual evidence is curated from completed implementation checkpoints and maintained alongside the platform documentation.
 
 ## Documentation
 
