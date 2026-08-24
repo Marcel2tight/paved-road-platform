@@ -1,0 +1,284 @@
+name: Apply Vertex AI Foundation
+
+on:
+  pull_request:
+    paths:
+      - "terraform/platform/vertex-ai/**"
+      - ".github/workflows/vertex-ai-foundation.yml"
+  workflow_dispatch:
+    inputs:
+      confirm_apply:
+        description: "Confirm that the reviewed Vertex AI foundation plan should be applied"
+        required: true
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: vertex-ai-foundation
+  cancel-in-progress: false
+
+env:
+  TF_WORKING_DIR: terraform/platform/vertex-ai
+  TF_IN_AUTOMATION: true
+  GCP_PROJECT_ID: imposing-fx-413205
+  GCP_REGION: us-central1
+  WIF_PROVIDER: projects/915035381641/locations/global/workloadIdentityPools/github-pool/providers/github-provider
+  FOUNDATION_SERVICE_ACCOUNT: paved-road-vertex-foundation@imposing-fx-413205.iam.gserviceaccount.com
+  RUNTIME_SERVICE_ACCOUNT: paved-road-vertex-runtime@imposing-fx-413205.iam.gserviceaccount.com
+
+jobs:
+  plan:
+    name: Plan Vertex AI Foundation
+    if: >-
+      github.event_name == 'pull_request' ||
+      (github.event_name == 'workflow_dispatch' &&
+      github.ref == 'refs/heads/main' &&
+      inputs.confirm_apply == true)
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+
+    steps:
+      - name: Checkout reviewed revision
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Authenticate to Google Cloud via OIDC
+        uses: google-github-actions/auth@6fc4af4b145ae7821d527454aa9bd537d1f2dc5f # v2.1.7
+        with:
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.FOUNDATION_SERVICE_ACCOUNT }}
+          project_id: ${{ env.GCP_PROJECT_ID }}
+          create_credentials_file: true
+          export_environment_variables: true
+
+      - name: Set up Google Cloud CLI
+        uses: google-github-actions/setup-gcloud@6189d56e4096ee891640bb02ac264be376592d6a # v2.1.2
+        with:
+          project_id: ${{ env.GCP_PROJECT_ID }}
+
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd # v3.1.2
+        with:
+          terraform_wrapper: false
+
+      - name: Check Terraform formatting
+        run: terraform -chdir="${TF_WORKING_DIR}" fmt -check -recursive
+
+      - name: Initialize Terraform
+        run: |
+          terraform -chdir="${TF_WORKING_DIR}" init \
+            -reconfigure \
+            -lockfile=readonly
+
+      - name: Select default workspace
+        run: terraform -chdir="${TF_WORKING_DIR}" workspace select default
+
+      - name: Validate Terraform configuration
+        run: terraform -chdir="${TF_WORKING_DIR}" validate
+
+      - name: Verify execution identity
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          ACTIVE_ACCOUNT="$(
+            gcloud auth list \
+              --filter='status:ACTIVE' \
+              --format='value(account)'
+          )"
+
+          printf 'Active account: %s\n' "${ACTIVE_ACCOUNT}"
+
+          if [ "${ACTIVE_ACCOUNT}" != "${FOUNDATION_SERVICE_ACCOUNT}" ]; then
+            echo "::error::Unexpected Terraform execution identity."
+            exit 1
+          fi
+
+      - name: Create saved Terraform plan
+        run: |
+          terraform -chdir="${TF_WORKING_DIR}" plan \
+            -input=false \
+            -lock-timeout=5m \
+            -out=tfplan
+
+      - name: Display human-readable plan
+        run: |
+          terraform -chdir="${TF_WORKING_DIR}" show \
+            -no-color \
+            tfplan |
+          tee "${TF_WORKING_DIR}/tfplan.txt"
+
+      - name: Hash saved plan
+        working-directory: ${{ env.TF_WORKING_DIR }}
+        run: sha256sum tfplan | tee tfplan.sha256
+
+      - name: Upload exact Terraform plan
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: vertex-ai-foundation-tfplan-${{ github.run_id }}
+          path: |
+            ${{ env.TF_WORKING_DIR }}/tfplan
+            ${{ env.TF_WORKING_DIR }}/tfplan.sha256
+            ${{ env.TF_WORKING_DIR }}/tfplan.txt
+          if-no-files-found: error
+          retention-days: 1
+
+  apply:
+    name: Apply Vertex AI Foundation
+    needs: plan
+    if: >-
+      github.event_name == 'workflow_dispatch' &&
+      github.ref == 'refs/heads/main' &&
+      inputs.confirm_apply == true
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    environment: platform-approval
+
+    steps:
+      - name: Checkout planned revision
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Authenticate to Google Cloud via OIDC
+        uses: google-github-actions/auth@6fc4af4b145ae7821d527454aa9bd537d1f2dc5f # v2.1.7
+        with:
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.FOUNDATION_SERVICE_ACCOUNT }}
+          project_id: ${{ env.GCP_PROJECT_ID }}
+          create_credentials_file: true
+          export_environment_variables: true
+
+      - name: Set up Google Cloud CLI
+        uses: google-github-actions/setup-gcloud@6189d56e4096ee891640bb02ac264be376592d6a # v2.1.2
+        with:
+          project_id: ${{ env.GCP_PROJECT_ID }}
+
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd # v3.1.2
+        with:
+          terraform_wrapper: false
+
+      - name: Initialize Terraform
+        run: |
+          terraform -chdir="${TF_WORKING_DIR}" init \
+            -reconfigure \
+            -lockfile=readonly
+
+      - name: Select default workspace
+        run: terraform -chdir="${TF_WORKING_DIR}" workspace select default
+
+      - name: Download reviewed Terraform plan
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: vertex-ai-foundation-tfplan-${{ github.run_id }}
+          path: ${{ env.TF_WORKING_DIR }}
+
+      - name: Verify saved-plan integrity
+        working-directory: ${{ env.TF_WORKING_DIR }}
+        run: sha256sum --check tfplan.sha256
+
+      - name: Apply exact reviewed plan
+        run: |
+          terraform -chdir="${TF_WORKING_DIR}" apply \
+            -input=false \
+            -lock-timeout=5m \
+            -auto-approve \
+            tfplan
+
+      - name: Verify Vertex AI API
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          gcloud services list \
+            --enabled \
+            --project="${GCP_PROJECT_ID}" \
+            --format='value(config.name)' |
+          grep -Fqx 'aiplatform.googleapis.com'
+
+          echo "Vertex AI API is enabled."
+
+      - name: Verify dedicated runtime identity
+        run: |
+          gcloud iam service-accounts describe \
+            "${RUNTIME_SERVICE_ACCOUNT}" \
+            --project="${GCP_PROJECT_ID}" \
+            --format='yaml(
+              name,
+              email,
+              displayName,
+              description,
+              disabled
+            )'
+
+      - name: Verify runtime Vertex AI role
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          RUNTIME_BINDING="$(
+            gcloud projects get-iam-policy "${GCP_PROJECT_ID}" \
+              --flatten='bindings[].members' \
+              --filter="bindings.role=roles/aiplatform.user AND bindings.members=serviceAccount:${RUNTIME_SERVICE_ACCOUNT}" \
+              --format='value(bindings.members)'
+          )"
+
+          if [ "${RUNTIME_BINDING}" != "serviceAccount:${RUNTIME_SERVICE_ACCOUNT}" ]; then
+            echo "::error::Expected runtime Vertex AI IAM binding was not found."
+            exit 1
+          fi
+
+          printf 'Verified binding: roles/aiplatform.user -> %s\n' \
+            "${RUNTIME_SERVICE_ACCOUNT}"
+
+      - name: Verify no runtime user-managed keys
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          KEY_COUNT="$(
+            gcloud iam service-accounts keys list \
+              --iam-account="${RUNTIME_SERVICE_ACCOUNT}" \
+              --project="${GCP_PROJECT_ID}" \
+              --managed-by=user \
+              --format='value(name)' |
+            sed '/^[[:space:]]*$/d' |
+            wc -l |
+            tr -d '[:space:]'
+          )"
+
+          if [ "${KEY_COUNT}" != "0" ]; then
+            echo "::error::Runtime service account has a user-managed key."
+            exit 1
+          fi
+
+          echo "Runtime identity has no user-managed keys."
+
+      - name: Verify Terraform convergence
+        run: |
+          terraform -chdir="${TF_WORKING_DIR}" plan \
+            -input=false \
+            -lock-timeout=5m \
+            -detailed-exitcode
+
+      - name: Publish foundation summary
+        shell: bash
+        run: |
+          {
+            echo "## Vertex AI foundation"
+            echo "- Project: ${GCP_PROJECT_ID}"
+            echo "- Region: ${GCP_REGION}"
+            echo "- Vertex AI API: enabled"
+            echo "- Runtime identity: ${RUNTIME_SERVICE_ACCOUNT}"
+            echo "- Runtime role: roles/aiplatform.user"
+            echo "- User-managed service-account keys: none"
+            echo "- Terraform convergence: verified"
+          } >> "${GITHUB_STEP_SUMMARY}"
