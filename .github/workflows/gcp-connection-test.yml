@@ -12,41 +12,92 @@ env:
 
 jobs:
   test-oidc:
+    name: Verify ${{ matrix.environment }}
     runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - environment: dev
+            project: imposing-fx-413205
+            service_account: paved-road-sa@imposing-fx-413205.iam.gserviceaccount.com
+            state_path: terraform/environments/dev/cloud-run/state/default.tfstate
+          - environment: stage
+            project: paved-road-stage-413205
+            service_account: paved-road-deployer@paved-road-stage-413205.iam.gserviceaccount.com
+            state_path: terraform/environments/stage/cloud-run/state/default.tfstate
+          - environment: prod
+            project: paved-road-prod-413205
+            service_account: paved-road-deployer@paved-road-prod-413205.iam.gserviceaccount.com
+            state_path: terraform/environments/prod/cloud-run/default.tfstate
 
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
 
       - name: Authenticate to Google Cloud (OIDC)
-        id: auth
         uses: google-github-actions/auth@v2
         with:
           workload_identity_provider: projects/915035381641/locations/global/workloadIdentityPools/github-pool/providers/github-provider
-          service_account: paved-road-sa@imposing-fx-413205.iam.gserviceaccount.com
+          service_account: ${{ matrix.service_account }}
+          project_id: ${{ matrix.project }}
           create_credentials_file: true
+          cleanup_credentials: true
 
       - name: Set up gcloud CLI
         uses: google-github-actions/setup-gcloud@v2
 
-      - name: Set Project
-        run: gcloud config set project imposing-fx-413205
-
-      - name: Verify Authentication (CRITICAL PROOF)
+      - name: Verify project and state-read access
+        shell: bash
+        env:
+          TARGET_PROJECT: ${{ matrix.project }}
+          STATE_OBJECT: ${{ matrix.state_path }}
         run: |
-          echo "========================================="
-          echo "     OIDC AUTHENTICATION VERIFICATION"
-          echo "========================================="
-          echo ""
-          echo "Credentialed Accounts:"
-          gcloud auth list
-          echo ""
-          echo "Active Configuration:"
-          gcloud config list
-          echo ""
-          echo "Project Details:"
-          gcloud projects describe imposing-fx-413205 --format="yaml(projectId, name, lifecycleState)"
-          echo ""
-          echo "========================================="
-          echo "OIDC CONNECTION SUCCESSFUL"
-          echo "========================================="
+          set -euo pipefail
+          umask 077
+          check_dir="$(mktemp -d "$RUNNER_TEMP/migration-check.XXXXXX")"
+          trap 'rm -rf -- "$check_dir"' EXIT
+
+          gcloud projects describe "$TARGET_PROJECT" \
+            --format=json > "$check_dir/project.json"
+
+          python - "$check_dir/project.json" <<'PY'
+          import json
+          import os
+          import sys
+
+          with open(sys.argv[1], encoding="utf-8") as source:
+              project = json.load(source)
+
+          if project.get("projectId") != os.environ["TARGET_PROJECT"]:
+              raise SystemExit("FAIL: Unexpected project.")
+          if project.get("lifecycleState") != "ACTIVE":
+              raise SystemExit("FAIL: Project is not active.")
+          if project.get("parent") != {"type": "organization", "id": "866343941940"}:
+              raise SystemExit("FAIL: Unexpected organization parent.")
+          print("PASS: Project is active in the expected organization.")
+          PY
+
+          gcloud storage cp \
+            "gs://marcel-paved-road-tfstate/$STATE_OBJECT" \
+            "$check_dir/state.json"
+
+          python - "$check_dir/state.json" <<'PY'
+          import json
+          import sys
+
+          with open(sys.argv[1], encoding="utf-8-sig") as source:
+              state = json.load(source)
+
+          if not isinstance(state, dict):
+              raise SystemExit("FAIL: Invalid state structure.")
+          if not (
+              isinstance(state.get("version"), int)
+              and isinstance(state.get("serial"), int)
+              and isinstance(state.get("lineage"), str)
+              and isinstance(state.get("resources"), list)
+          ):
+              raise SystemExit("FAIL: Missing or invalid state metadata.")
+          print("PASS: State downloaded and parsed; contents withheld.")
+          PY
