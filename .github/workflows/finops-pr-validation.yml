@@ -9,6 +9,7 @@ on:
       - "terraform/platform/finops/**"
       - ".github/workflows/build-finops-budget-consumer-image.yml"
       - ".github/workflows/finops-pr-validation.yml"
+      - ".github/workflows/finops-terraform.yml"
 
 permissions:
   contents: read
@@ -97,6 +98,7 @@ jobs:
 
           workflows = [
             ".github/workflows/build-finops-budget-consumer-image.yml",
+            ".github/workflows/finops-terraform.yml",
             ".github/workflows/finops-pr-validation.yml"
           ]
 

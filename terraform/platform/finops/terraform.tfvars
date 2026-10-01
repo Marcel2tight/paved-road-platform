@@ -1,6 +1,6 @@
 management_project_id                    = "imposing-fx-413205"
 region                                   = "us-central1"
-billing_account_id                       = "01500A-A64D6C-AB73C2"
+billing_account_id                       = "01FEB1-F99CD2-1C5389"
 terraform_deployer_service_account_email = "paved-road-sa@imposing-fx-413205.iam.gserviceaccount.com"
 
 budget_display_name            = "Paved Road Platform Budget"
