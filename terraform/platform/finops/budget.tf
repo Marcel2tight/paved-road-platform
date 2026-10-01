@@ -11,7 +11,7 @@ resource "google_billing_budget" "paved_road" {
 
   budget_filter {
     calendar_period        = "MONTH"
-    credit_types_treatment = "INCLUDE_ALL_CREDITS"
+    credit_types_treatment = "EXCLUDE_ALL_CREDITS"
   }
 
   threshold_rules {

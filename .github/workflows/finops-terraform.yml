@@ -2,6 +2,12 @@ name: Deploy FinOps Infrastructure
 
 on:
   workflow_dispatch:
+    inputs:
+      apply:
+        description: Apply the saved plan after review
+        type: boolean
+        required: false
+        default: false
   push:
     branches:
       - main
@@ -80,6 +86,7 @@ jobs:
 
   apply:
     name: Apply FinOps Infrastructure
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.apply == true
     needs: plan
     runs-on: ubuntu-latest
     environment: dev
